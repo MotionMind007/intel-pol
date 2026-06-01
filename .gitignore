@@ -1,0 +1,15 @@
+node_modules/
+vendor/
+.env
+.DS_Store
+*.log
+backend/storage/logs/*.log
+backend/database/*.sqlite
+frontend/dist/
+__pycache__/
+.pytest_cache/
+ai-service/storage/
+ai-service/app/__pycache__/
+backend/bootstrap/cache/*.php
+backend/storage/framework/views/*.php
+backend/.phpunit.result.cache
