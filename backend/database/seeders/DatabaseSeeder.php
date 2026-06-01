@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\Agent;
 use App\Models\AiModel;
 use App\Models\AiProvider;
+use App\Models\MediaSource;
 use App\Models\Skill;
 use App\Models\User;
 use Illuminate\Database\Seeder;
@@ -53,6 +54,19 @@ class DatabaseSeeder extends Seeder
                 'is_active' => true,
             ],
         );
+
+        $configuredModel = AiModel::query()
+            ->where('is_active', true)
+            ->where('model_name', '!=', 'political-screening-mock')
+            ->first();
+        $configuredProvider = $configuredModel
+            ? AiProvider::query()->find($configuredModel->provider_id)
+            : AiProvider::query()
+                ->where('status', 'active')
+                ->where('name', '!=', 'OpenAI Compatible')
+                ->first();
+        $agentProvider = $configuredProvider ?? $provider;
+        $agentModel = $configuredModel ?? $model;
 
         $systemPrompt = <<<'PROMPT'
 You are a Political Intelligence Analyst specializing in Indonesian political figure screening.
@@ -107,8 +121,8 @@ PROMPT;
             [
                 'role_description' => 'Candidate Screening Analyst',
                 'system_prompt' => $systemPrompt,
-                'provider_id' => $provider->id,
-                'model_id' => $model->id,
+                'provider_id' => $agentProvider->id,
+                'model_id' => $agentModel->id,
                 'temperature' => 0.4,
                 'max_tokens' => 8000,
                 'status' => 'active',
@@ -660,6 +674,178 @@ SKILL,
                     'daily_limit' => null,
                 ],
             ]);
+        }
+
+        $mediaPrompt = <<<'PROMPT'
+You are a Political Media Monitoring Analyst for Indonesian and Papua political intelligence.
+
+CORE RULES:
+- Semua output wajib Bahasa Indonesia.
+- Return structured JSON only, no Markdown outside JSON.
+- Monitor keyword dari portal berita nasional, media lokal Papua, Google Search insight, Google Trends insight, social media publik, sumber resmi, dan blog publik jika tersedia.
+- Jangan mengarang fakta, URL, tanggal, engagement, atau jumlah data.
+- Jika data tidak tersedia, tulis "data belum ditemukan" atau "belum tersedia dari sumber publik".
+- Pisahkan fakta, dugaan, opini, klarifikasi, dan framing media.
+- Google Trends hanya indikator minat pencarian, bukan elektabilitas.
+- Engagement sosial media hanya indikator engagement digital, bukan dukungan pemilih.
+- Selalu sertakan source URL, nama sumber, platform, dan tanggal jika tersedia.
+- Klasifikasi sentimen: positive, neutral, negative.
+- Klasifikasi risiko reputasi: low, medium, high, critical.
+- Fokus konteks politik Indonesia dan Papua: Otsus, DOB, Pilkada, KPU, Bawaslu, DPRP/DPRD, partai, adat, gereja, keamanan, pendidikan, kesehatan, infrastruktur.
+PROMPT;
+
+        $mediaAgent = Agent::updateOrCreate(
+            ['name' => 'Media Monitoring Agent'],
+            [
+                'role_description' => 'Media Monitoring Orchestrator',
+                'system_prompt' => $mediaPrompt,
+                'provider_id' => $agentProvider->id,
+                'model_id' => $agentModel->id,
+                'temperature' => 0.35,
+                'max_tokens' => 12000,
+                'status' => 'active',
+            ],
+        );
+
+        $mediaSkills = [
+            [
+                'name' => 'News Search',
+                'slug' => 'news-search',
+                'description' => 'Mencari berita nasional dan lokal Papua berdasarkan keyword.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'medium',
+                'technology_type' => 'Search API / RSS / direct public web',
+                'prompt_content' => 'Cari berita dari Kompas, Detik, Tempo, CNN Indonesia, Antara, Jubi, Cepos Online, Kabar Papua, Papua Terkini, dan sumber lokal relevan. Ambil judul, URL, sumber, tanggal, snippet, isu, sentimen awal, dan risiko.',
+            ],
+            [
+                'name' => 'Social Search',
+                'slug' => 'social-search',
+                'description' => 'Mencari percakapan publik dari sosial media secara terbatas.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'medium',
+                'technology_type' => 'Public search / social listening provider',
+                'prompt_content' => 'Gunakan hanya data publik. Jangan login, jangan post, jangan DM, jangan follow/unfollow. Catat hashtag, mention, engagement publik, dan narasi utama jika tersedia.',
+            ],
+            [
+                'name' => 'Google Search Insight',
+                'slug' => 'google-search-insight',
+                'description' => 'Menganalisis hasil pencarian web berdasarkan keyword.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'medium',
+                'technology_type' => 'Google CSE / SerpAPI / Bing fallback',
+                'prompt_content' => 'Gunakan search API atau fallback web publik. Jangan scraping Google secara agresif. Ambil judul, snippet, domain, ranking, dan relevansi isu.',
+            ],
+            [
+                'name' => 'Google Trends Analysis',
+                'slug' => 'google-trends-analysis',
+                'description' => 'Menganalisis minat pencarian dan related queries.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'medium',
+                'technology_type' => 'Pytrends / browser fallback',
+                'prompt_content' => 'Jelaskan Google Trends sebagai search-interest, bukan elektabilitas. Sertakan related queries, related topics, wilayah, dan catatan keterbatasan data.',
+            ],
+            [
+                'name' => 'Article Extraction',
+                'slug' => 'article-extraction',
+                'description' => 'Membaca artikel dan membersihkan konten dari noise.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'medium',
+                'technology_type' => 'HTTP parser / browser fallback',
+                'prompt_content' => 'Ekstrak isi artikel, metadata, ringkasan, kategori isu, tokoh, lokasi, dan framing. Jangan menulis klaim tanpa sumber.',
+            ],
+            [
+                'name' => 'Issue Classification',
+                'slug' => 'issue-classification',
+                'description' => 'Mengelompokkan isu dominan, positif, dan negatif.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'low',
+                'technology_type' => 'LLM / NLP',
+                'prompt_content' => 'Kategori awal: politik, pemerintahan, hukum, korupsi, pemilu, sosial, ekonomi, pendidikan, kesehatan, infrastruktur, keamanan, konflik internal, citra personal, adat, agama, Otsus, DOB.',
+            ],
+            [
+                'name' => 'Entity Extraction',
+                'slug' => 'entity-extraction',
+                'description' => 'Mendeteksi aktor, partai, organisasi, wilayah, dan media.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'low',
+                'technology_type' => 'NER / LLM',
+                'prompt_content' => 'Entity type: person, party, organization, government, region, media, community. Hitung mention jika tersedia.',
+            ],
+            [
+                'name' => 'Risk Detection',
+                'slug' => 'risk-detection',
+                'description' => 'Menilai risiko reputasi dan potensi krisis.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'medium',
+                'technology_type' => 'LLM reasoning',
+                'prompt_content' => 'Critical jika isu hukum berat, dugaan korupsi besar, konflik massa, isu SARA, viralitas tinggi, atau banyak media mengangkat isu negatif yang sama. Bedakan dugaan dan fakta.',
+            ],
+            [
+                'name' => 'Trend Analysis',
+                'slug' => 'trend-analysis',
+                'description' => 'Menganalisis tren pemberitaan, sumber aktif, dan perubahan sentimen.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'low',
+                'technology_type' => 'Aggregation / LLM summary',
+                'prompt_content' => 'Ringkas frekuensi item per sumber, isu yang naik, aktor dominan, dan perubahan sentimen. Jika data time-series belum ada, sebutkan keterbatasan.',
+            ],
+            [
+                'name' => 'Response Recommendation',
+                'slug' => 'response-recommendation',
+                'description' => 'Menyusun rekomendasi respon komunikasi politik.',
+                'category' => 'media_monitoring',
+                'risk_level' => 'medium',
+                'technology_type' => 'LLM strategy',
+                'prompt_content' => 'Buat rekomendasi high/medium/low priority yang konkret: klarifikasi, narasi tandingan, engagement media, proof point, stakeholder outreach, dan monitoring lanjutan.',
+            ],
+        ];
+
+        foreach ($mediaSkills as $skillData) {
+            $skill = Skill::updateOrCreate(
+                ['slug' => $skillData['slug']],
+                $skillData,
+            );
+
+            $mediaAgent->skills()->syncWithoutDetaching([
+                $skill->id => [
+                    'enabled' => true,
+                    'requires_approval' => $skillData['risk_level'] === 'high',
+                    'daily_limit' => null,
+                ],
+            ]);
+        }
+
+        $browserSkill = Skill::query()->where('slug', 'browser-automation')->first();
+        if ($browserSkill) {
+            $mediaAgent->skills()->syncWithoutDetaching([
+                $browserSkill->id => [
+                    'enabled' => true,
+                    'requires_approval' => true,
+                    'daily_limit' => null,
+                ],
+            ]);
+        }
+
+        $sources = [
+            ['name' => 'Kompas', 'domain' => 'kompas.com', 'source_type' => 'news_national', 'platform' => 'web', 'credibility_score' => 90],
+            ['name' => 'Detik', 'domain' => 'detik.com', 'source_type' => 'news_national', 'platform' => 'web', 'credibility_score' => 85],
+            ['name' => 'Tempo', 'domain' => 'tempo.co', 'source_type' => 'news_national', 'platform' => 'web', 'credibility_score' => 90],
+            ['name' => 'CNN Indonesia', 'domain' => 'cnnindonesia.com', 'source_type' => 'news_national', 'platform' => 'web', 'credibility_score' => 85],
+            ['name' => 'Antara News', 'domain' => 'antaranews.com', 'source_type' => 'news_national', 'platform' => 'web', 'credibility_score' => 88],
+            ['name' => 'Jubi', 'domain' => 'jubi.id', 'source_type' => 'news_local_papua', 'platform' => 'web', 'credibility_score' => 82],
+            ['name' => 'Cenderawasih Pos', 'domain' => 'ceposonline.com', 'source_type' => 'news_local_papua', 'platform' => 'web', 'credibility_score' => 80],
+            ['name' => 'Kabar Papua', 'domain' => 'kabarpapua.co', 'source_type' => 'news_local_papua', 'platform' => 'web', 'credibility_score' => 78],
+            ['name' => 'Papua Terkini', 'domain' => 'papuaterkini.com', 'source_type' => 'news_local_papua', 'platform' => 'web', 'credibility_score' => 76],
+            ['name' => 'Google Search', 'domain' => 'google.com', 'source_type' => 'google_search', 'platform' => 'search', 'credibility_score' => 70],
+            ['name' => 'Google Trends', 'domain' => 'trends.google.com', 'source_type' => 'google_trends', 'platform' => 'search_interest', 'credibility_score' => 70],
+            ['name' => 'YouTube Public Search', 'domain' => 'youtube.com', 'source_type' => 'social_media', 'platform' => 'youtube', 'credibility_score' => 65],
+        ];
+
+        foreach ($sources as $source) {
+            MediaSource::updateOrCreate(
+                ['name' => $source['name']],
+                $source + ['is_active' => true],
+            );
         }
     }
 }

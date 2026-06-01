@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Admin\AiProviderController;
 use App\Http\Controllers\Api\Admin\SkillController;
 use App\Http\Controllers\Api\Admin\UsageLogController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\MediaMonitoringController;
 use App\Http\Controllers\Api\ModuleController;
 use App\Http\Controllers\Api\ScreeningReportController;
 use Illuminate\Support\Facades\Route;
@@ -20,6 +21,17 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::apiResource('screening-reports', ScreeningReportController::class)
         ->only(['index', 'store', 'show', 'destroy']);
+
+    Route::get('/media-monitoring', [MediaMonitoringController::class, 'index']);
+    Route::post('/media-monitoring/run', [MediaMonitoringController::class, 'run']);
+    Route::get('/media-monitoring/runs', [MediaMonitoringController::class, 'runs']);
+    Route::get('/media-monitoring/runs/{run}', [MediaMonitoringController::class, 'show']);
+    Route::delete('/media-monitoring/runs/{run}', [MediaMonitoringController::class, 'destroyRun']);
+    Route::get('/media-monitoring/items/{item}', [MediaMonitoringController::class, 'item']);
+    Route::get('/media-monitoring/sources', [MediaMonitoringController::class, 'sources']);
+    Route::post('/media-monitoring/sources', [MediaMonitoringController::class, 'storeSource']);
+    Route::put('/media-monitoring/sources/{source}', [MediaMonitoringController::class, 'updateSource']);
+    Route::delete('/media-monitoring/keywords/{keyword}', [MediaMonitoringController::class, 'destroyKeyword']);
 
     Route::prefix('admin')->middleware('super_admin')->group(function () {
         Route::apiResource('agents', AgentController::class);

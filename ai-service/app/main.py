@@ -41,6 +41,11 @@ class ScreeningRequest(BaseModel):
     agent: AgentConfig
 
 
+class MediaMonitoringRequest(BaseModel):
+    keyword: str = Field(min_length=1, max_length=180)
+    agent: AgentConfig
+
+
 def verify_internal_token(token: str | None) -> None:
     expected = os.getenv("INTERNAL_SERVICE_TOKEN", "local-dev-token")
 
@@ -89,6 +94,30 @@ async def generate_screening(payload: ScreeningRequest, x_internal_token: str | 
             return fallback
 
     return build_mock_report(payload.subject_name, wikipedia, browser_pages)
+
+
+@app.post("/internal/ai/media-monitoring/run")
+async def run_media_monitoring(payload: MediaMonitoringRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
+    verify_internal_token(x_internal_token)
+
+    context = await collect_media_monitoring_context(payload.keyword, payload.agent)
+
+    if should_use_provider(payload.agent):
+        try:
+            return await generate_media_monitoring_with_provider(payload, context)
+        except Exception as exc:
+            if os.getenv("AI_FALLBACK_ON_PROVIDER_ERROR", "false").lower() not in {"1", "true", "yes"}:
+                raise HTTPException(status_code=502, detail=f"Provider AI gagal menghasilkan JSON valid: {exc}") from exc
+
+            fallback = build_mock_media_monitoring(payload.keyword, context)
+            fallback["provider_error"] = str(exc)
+            fallback["executive_summary"] = (
+                fallback["executive_summary"]
+                + " Provider AI gagal dipanggil, sehingga hasil ini memakai fallback lokal."
+            )
+            return fallback
+
+    return build_mock_media_monitoring(payload.keyword, context)
 
 
 def should_use_provider(agent: AgentConfig) -> bool:
@@ -148,6 +177,53 @@ async def generate_with_provider(
     parsed.setdefault("sources", [])
 
     return parsed
+
+
+async def generate_media_monitoring_with_provider(
+    payload: MediaMonitoringRequest,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    provider = payload.agent.provider
+    assert provider is not None
+
+    prompt = build_media_monitoring_prompt(payload.keyword, context, payload.agent.skills)
+    request_payload = {
+        "model": payload.agent.model,
+        "messages": [
+            {
+                "role": "system",
+                "content": build_media_monitoring_system_prompt(payload.agent.system_prompt),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": payload.agent.temperature,
+        "max_tokens": max(payload.agent.max_tokens, int(os.getenv("AI_MIN_REPORT_MAX_TOKENS", "16000"))),
+    }
+
+    if os.getenv("AI_PROVIDER_RESPONSE_FORMAT", "json_object") == "json_object":
+        request_payload["response_format"] = {"type": "json_object"}
+
+    timeout = float(os.getenv("AI_PROVIDER_TIMEOUT", "7200"))
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(
+            f"{provider.base_url.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {provider.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=request_payload,
+        )
+        response.raise_for_status()
+
+        content = response.json()["choices"][0]["message"]["content"]
+        parsed = await parse_or_repair_json_content(client, provider, payload.agent, content)
+
+    parsed.setdefault("keyword", payload.keyword.strip())
+    parsed.setdefault("items", [])
+    parsed.setdefault("sources", context.get("sources", []))
+
+    return normalize_media_monitoring_result(parsed, context)
 
 
 async def parse_or_repair_json_content(
@@ -424,6 +500,181 @@ Konteks Tokoh Screening Framework:
 """
 
 
+def build_media_monitoring_system_prompt(existing_prompt: str | None) -> str:
+    base = existing_prompt or "You are a neutral Political Media Monitoring Analyst."
+
+    return f"""
+{base}
+
+Instruksi wajib Media Monitoring:
+- Semua output harus menggunakan Bahasa Indonesia.
+- Return structured JSON only, tanpa Markdown di luar JSON.
+- Jangan mengarang fakta, URL, tanggal publish, engagement, jumlah data, atau sumber.
+- Jika data belum tersedia, tulis eksplisit "data belum ditemukan" atau "belum tersedia dari sumber publik".
+- Pisahkan fakta, dugaan, opini, klarifikasi, framing media, dan rekomendasi.
+- Google Trends wajib dijelaskan sebagai indikator minat pencarian, bukan elektabilitas.
+- Engagement sosial media wajib dijelaskan sebagai engagement digital, bukan dukungan pemilih.
+- Setiap item wajib punya title/caption, source, platform, url jika tersedia, summary, sentiment, issue_category, dan risk_level.
+- Gunakan klasifikasi sentimen: positive, neutral, negative.
+- Gunakan risk_level: low, medium, high, critical.
+- Fokus isu politik Indonesia dan Papua: Pilkada, DPR/DPRD, KPU, Bawaslu, Otsus, DOB, adat, gereja, pendidikan, kesehatan, ekonomi, keamanan, infrastruktur, dan citra personal.
+"""
+
+
+async def collect_media_monitoring_context(keyword: str, agent: AgentConfig) -> dict[str, Any]:
+    query = quote(keyword.strip())
+    source_urls = [
+        {"name": "Detik Search", "url": f"https://www.detik.com/search/searchall?query={query}", "source_type": "news_national"},
+        {"name": "Kompas Search", "url": f"https://search.kompas.com/search/?q={query}", "source_type": "news_national"},
+        {"name": "Tempo Search", "url": f"https://www.tempo.co/search?q={query}", "source_type": "news_national"},
+        {"name": "Antara Search", "url": f"https://www.antaranews.com/search?q={query}", "source_type": "news_national"},
+        {"name": "Jubi Search", "url": f"https://jubi.id/?s={query}", "source_type": "news_local_papua"},
+        {"name": "Cenderawasih Pos Search", "url": f"https://www.ceposonline.com/?s={query}", "source_type": "news_local_papua"},
+        {"name": "Kabar Papua Search", "url": f"https://kabarpapua.co/?s={query}", "source_type": "news_local_papua"},
+        {"name": "YouTube Public Search", "url": f"https://www.youtube.com/results?search_query={query}", "source_type": "social_media"},
+        {"name": "Google Trends", "url": f"https://trends.google.com/trends/explore?geo=ID&q={query}", "source_type": "google_trends"},
+    ]
+
+    snapshots: list[dict[str, Any]] = []
+
+    if has_active_skill(agent, "browser-automation"):
+        max_pages = int(os.getenv("MEDIA_BROWSER_MAX_PAGES", "4"))
+        for source in source_urls[:max_pages]:
+            try:
+                page = await browse_page(source["url"], keyword)
+                page["source_name"] = source["name"]
+                page["source_type"] = source["source_type"]
+                snapshots.append(page)
+            except Exception as exc:
+                snapshots.append(
+                    {
+                        "url": source["url"],
+                        "source_name": source["name"],
+                        "source_type": source["source_type"],
+                        "title": "Browser Automation gagal",
+                        "text": f"Halaman gagal dibuka oleh browser automation: {exc}",
+                        "screenshot_path": None,
+                        "status": "failed",
+                    }
+                )
+
+    sources = [
+        {
+            "name": source["name"],
+            "link": source["url"],
+            "accessed_at": date.today().isoformat(),
+            "type": source["source_type"],
+        }
+        for source in source_urls
+    ]
+
+    return {
+        "keyword": keyword.strip(),
+        "source_urls": source_urls,
+        "browser_pages": snapshots,
+        "sources": sources,
+    }
+
+
+def build_media_monitoring_prompt(
+    keyword: str,
+    context: dict[str, Any],
+    active_skills: list[dict[str, Any]] | None = None,
+) -> str:
+    browser_block = build_browser_prompt_block(context.get("browser_pages", []))
+    skill_block = build_skill_prompt_block(active_skills or [])
+    source_lines = "\n".join(
+        f"- {source['name']} ({source['source_type']}): {source['url']}"
+        for source in context.get("source_urls", [])
+    )
+
+    return f"""
+Jalankan MEDIA MONITORING untuk keyword: {keyword}
+
+Sumber pencarian yang dikonfigurasi:
+{source_lines}
+
+{browser_block}
+
+{skill_block}
+
+Kembalikan JSON saja dengan struktur persis seperti ini:
+{{
+  "keyword": "{keyword}",
+  "executive_summary": "string",
+  "total_items": 0,
+  "source_breakdown": {{
+    "news_national": 0,
+    "news_local_papua": 0,
+    "social_media": 0,
+    "google_search": 0,
+    "google_trends": 0
+  }},
+  "sentiment": {{
+    "positive": 0,
+    "neutral": 0,
+    "negative": 0,
+    "dominant": "neutral"
+  }},
+  "risk_level": "low",
+  "risk_assessment": "string",
+  "dominant_issues": [
+    {{"issue": "string", "count": 0, "sentiment": "neutral", "risk_level": "low"}}
+  ],
+  "positive_issues": [],
+  "negative_issues": [],
+  "top_actors": [
+    {{"name": "string", "type": "person", "mentions": 0}}
+  ],
+  "top_sources": [
+    {{"name": "string", "source_type": "news_local_papua", "item_count": 0}}
+  ],
+  "trend": {{
+    "summary": "string",
+    "signals": []
+  }},
+  "google_trends_insight": {{
+    "summary": "string",
+    "related_queries": [],
+    "related_topics": []
+  }},
+  "items": [
+    {{
+      "title": "string",
+      "source": "string",
+      "source_type": "news_national",
+      "platform": "news",
+      "url": "string",
+      "published_at": null,
+      "summary": "string",
+      "sentiment": "neutral",
+      "issue_category": "politics",
+      "risk_level": "low",
+      "risk_reason": "string",
+      "entities": []
+    }}
+  ],
+  "strategic_recommendation": {{
+    "high_priority": [],
+    "medium_priority": [],
+    "low_priority": []
+  }},
+  "sources": [
+    {{"name": "string", "link": "string", "accessed_at": "YYYY-MM-DD", "type": "string"}}
+  ]
+}}
+
+Aturan detail:
+- Output wajib Bahasa Indonesia.
+- Jangan membuat artikel palsu. Isi "items" hanya dari konteks browser/sumber yang benar-benar tersedia. Jika konteks minim, items boleh sedikit atau kosong.
+- Jika total item sebenarnya belum dapat dihitung, gunakan jumlah item yang berhasil dikenali dari konteks, lalu jelaskan keterbatasannya di executive_summary.
+- Ringkasan harus menjawab: total data, sumber dominan, sentimen dominan, isu dominan, aktor disebut, Google Trends insight, risiko reputasi, rekomendasi respon.
+- Untuk berita lokal Papua, beri perhatian lebih tinggi pada konteks politik lokal dan risiko reputasi lokal.
+- Setiap rekomendasi harus konkret dan bisa dieksekusi tim komunikasi/politik.
+- sources wajib mencantumkan sumber yang digunakan atau dikonfigurasi pada run ini, dengan tanggal akses {date.today().isoformat()}.
+"""
+
+
 def parse_json_content(content: str) -> dict[str, Any]:
     cleaned = content.strip()
 
@@ -590,6 +841,152 @@ def build_skill_prompt_block(active_skills: list[dict[str, Any]]) -> str:
             lines.append("(Tidak ada instruksi tambahan untuk skill ini.)")
 
     return "\n".join(lines)
+
+
+def normalize_media_monitoring_result(result: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    result.setdefault("keyword", context.get("keyword", ""))
+    result.setdefault("source_breakdown", {})
+    result.setdefault("sentiment", {})
+    result.setdefault("dominant_issues", [])
+    result.setdefault("positive_issues", [])
+    result.setdefault("negative_issues", [])
+    result.setdefault("top_actors", [])
+    result.setdefault("top_sources", [])
+    result.setdefault("trend", {"summary": "Data tren time-series belum tersedia penuh.", "signals": []})
+    result.setdefault(
+        "google_trends_insight",
+        {
+            "summary": "Insight Google Trends belum tersedia penuh. Data ini perlu dibaca sebagai minat pencarian, bukan elektabilitas.",
+            "related_queries": [],
+            "related_topics": [],
+        },
+    )
+    result.setdefault("items", [])
+    result.setdefault("strategic_recommendation", {"high_priority": [], "medium_priority": [], "low_priority": []})
+
+    sources = result.setdefault("sources", [])
+    known_links = {source.get("link") for source in sources if isinstance(source, dict)}
+    for source in context.get("sources", []):
+        if source["link"] not in known_links:
+            sources.append(source)
+
+    items = result.get("items") if isinstance(result.get("items"), list) else []
+    result["items"] = items
+    result["total_items"] = int(result.get("total_items") or len(items))
+
+    breakdown = result["source_breakdown"]
+    for key in ["news_national", "news_local_papua", "social_media", "google_search", "google_trends"]:
+        breakdown.setdefault(key, 0)
+
+    sentiment = result["sentiment"]
+    for key in ["positive", "neutral", "negative"]:
+        sentiment.setdefault(key, 0)
+    sentiment.setdefault("dominant", "neutral")
+    result.setdefault("risk_level", "low")
+    result.setdefault("risk_assessment", "Risiko reputasi belum dapat dinilai penuh karena data publik yang terkumpul masih terbatas.")
+    result.setdefault(
+        "executive_summary",
+        "Monitoring selesai, tetapi ringkasan AI belum tersedia penuh. Lihat daftar sumber dan item untuk verifikasi manual.",
+    )
+
+    return result
+
+
+def build_mock_media_monitoring(keyword: str, context: dict[str, Any]) -> dict[str, Any]:
+    pages = [page for page in context.get("browser_pages", []) if page.get("status") == "ok"]
+    items = []
+
+    for page in pages:
+        text = (page.get("text") or "").strip()
+        items.append(
+            {
+                "title": page.get("title") or f"Hasil pemantauan {page.get('source_name', 'sumber publik')}",
+                "source": page.get("source_name", "Sumber publik"),
+                "source_type": page.get("source_type", "other"),
+                "platform": "web",
+                "url": page.get("url", ""),
+                "published_at": None,
+                "summary": text[:700] if text else "Konten halaman belum berhasil diekstrak secara memadai.",
+                "sentiment": "neutral",
+                "issue_category": "politik",
+                "risk_level": "medium" if text else "low",
+                "risk_reason": "Perlu analisis lanjutan dari model utama untuk mengukur risiko secara akurat.",
+                "entities": [],
+                "screenshot_path": page.get("screenshot_path"),
+            }
+        )
+
+    news_national = len([item for item in items if item["source_type"] == "news_national"])
+    news_local = len([item for item in items if item["source_type"] == "news_local_papua"])
+    social = len([item for item in items if item["source_type"] == "social_media"])
+    trends = len([item for item in items if item["source_type"] == "google_trends"])
+
+    result = {
+        "keyword": keyword.strip(),
+        "executive_summary": (
+            f"Monitoring keyword {keyword.strip()} sudah berjalan di latar belakang. "
+            f"Sistem membaca {len(items)} halaman publik dari sumber yang dikonfigurasi. "
+            "Ringkasan ini bersifat fallback lokal; analisis paling detail akan muncul ketika provider AI aktif dan berhasil mengembalikan JSON valid. "
+            "Google Trends, bila tersedia, harus dibaca sebagai minat pencarian, bukan elektabilitas."
+        ),
+        "total_items": len(items),
+        "source_breakdown": {
+            "news_national": news_national,
+            "news_local_papua": news_local,
+            "social_media": social,
+            "google_search": 0,
+            "google_trends": trends,
+        },
+        "sentiment": {
+            "positive": 0,
+            "neutral": len(items),
+            "negative": 0,
+            "dominant": "neutral",
+        },
+        "risk_level": "medium" if items else "low",
+        "risk_assessment": "Belum ada sinyal krisis yang dapat diverifikasi dari fallback lokal. Perlu analisis AI penuh untuk membaca framing, isu negatif, dan intensitas pemberitaan.",
+        "dominant_issues": [
+            {
+                "issue": f"Percakapan/pemberitaan terkait {keyword.strip()}",
+                "count": len(items),
+                "sentiment": "neutral",
+                "risk_level": "medium" if items else "low",
+            }
+        ],
+        "positive_issues": [],
+        "negative_issues": [],
+        "top_actors": [],
+        "top_sources": [
+            {"name": item["source"], "source_type": item["source_type"], "item_count": 1}
+            for item in items[:8]
+        ],
+        "trend": {
+            "summary": "Data tren time-series belum tersedia dari fallback lokal.",
+            "signals": [],
+        },
+        "google_trends_insight": {
+            "summary": "Google Trends belum dianalisis penuh. Gunakan data Trends hanya sebagai indikator minat pencarian, bukan elektabilitas.",
+            "related_queries": [],
+            "related_topics": [],
+        },
+        "items": items,
+        "strategic_recommendation": {
+            "high_priority": [
+                "Verifikasi manual item sumber utama sebelum dipakai untuk keputusan komunikasi.",
+                "Jika ditemukan pemberitaan negatif, pisahkan fakta, dugaan, klarifikasi, dan opini sebelum merespons.",
+            ],
+            "medium_priority": [
+                "Pantau media lokal Papua karena sering lebih cepat menangkap isu daerah.",
+                "Tambahkan search provider resmi untuk memperluas cakupan Google Search dan sosial media publik.",
+            ],
+            "low_priority": [
+                "Simpan screenshot sumber penting sebagai arsip monitoring.",
+            ],
+        },
+        "sources": context.get("sources", []),
+    }
+
+    return normalize_media_monitoring_result(result, context)
 
 
 def build_mock_report(

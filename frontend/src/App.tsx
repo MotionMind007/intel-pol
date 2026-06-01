@@ -25,6 +25,7 @@ import {
 import './App.css'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
+const APP_LOGO = '/logo.png'
 
 type AppUser = {
   id: number
@@ -97,6 +98,64 @@ type ScreeningReport = {
   result_json: ScreeningResult | null
 }
 
+type MediaMonitoringInsight = {
+  executive_summary?: string | null
+  dominant_issues_json?: Array<{ issue: string; count?: number; sentiment?: string; risk_level?: string }> | null
+  positive_issues_json?: string[] | null
+  negative_issues_json?: string[] | null
+  top_actors_json?: Array<{ name: string; type?: string; mentions?: number }> | null
+  top_sources_json?: Array<{ name: string; source_type?: string; item_count?: number }> | null
+  trend_json?: { summary?: string; signals?: string[] } | null
+  google_trends_json?: { summary?: string; related_queries?: string[]; related_topics?: string[] } | null
+  risk_assessment?: string | null
+  strategic_recommendation?: {
+    high_priority?: string[]
+    medium_priority?: string[]
+    low_priority?: string[]
+  } | null
+  raw_json?: Record<string, unknown> | null
+}
+
+type MediaItem = {
+  id: number
+  title?: string | null
+  source_type: string
+  platform: string
+  snippet?: string | null
+  url?: string | null
+  published_at?: string | null
+  source?: { name: string; source_type: string } | null
+  analysis?: {
+    summary?: string | null
+    sentiment?: string | null
+    issue_category?: string | null
+    risk_level?: string | null
+    risk_reason?: string | null
+    recommendation?: string | null
+  } | null
+}
+
+type MediaMonitoringRun = {
+  id: number
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_items: number
+  news_count: number
+  social_count: number
+  google_search_count: number
+  google_trends_count: number
+  positive_count: number
+  neutral_count: number
+  negative_count: number
+  risk_level?: string | null
+  error_message?: string | null
+  created_at: string
+  started_at?: string | null
+  finished_at?: string | null
+  keyword?: { id: number; keyword: string } | null
+  insight?: MediaMonitoringInsight | null
+  items?: MediaItem[]
+}
+
 type Agent = {
   id: number
   name: string
@@ -135,7 +194,7 @@ type AgentDraft = {
   maxTokens: string
 }
 
-type View = 'modules' | 'screening' | 'reports' | 'settings'
+type View = 'modules' | 'screening' | 'media-monitoring' | 'reports' | 'settings'
 
 const fallbackModules = [
   {
@@ -174,14 +233,18 @@ function App() {
   const [adminMenus, setAdminMenus] = useState<string[]>([])
   const [reports, setReports] = useState<ScreeningReport[]>([])
   const [activeReport, setActiveReport] = useState<ScreeningReport | null>(null)
+  const [mediaRuns, setMediaRuns] = useState<MediaMonitoringRun[]>([])
+  const [activeMediaRun, setActiveMediaRun] = useState<MediaMonitoringRun | null>(null)
   const [agents, setAgents] = useState<Agent[]>([])
   const [settingsDraft, setSettingsDraft] = useState<Record<number, AgentDraft>>({})
   const [savingSkillAgentId, setSavingSkillAgentId] = useState<number | null>(null)
   const [deletingReportId, setDeletingReportId] = useState<number | null>(null)
+  const [deletingMediaRunId, setDeletingMediaRunId] = useState<number | null>(null)
   const [view, setView] = useState<View>('modules')
   const [email, setEmail] = useState('superadmin@example.com')
   const [password, setPassword] = useState('password')
   const [subjectName, setSubjectName] = useState('Jhony Banua Rouw')
+  const [mediaKeyword, setMediaKeyword] = useState('PSI Papua')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [dark, setDark] = useState(false)
@@ -194,6 +257,7 @@ function App() {
 
   const visibleModules = modules.length > 0 ? modules : fallbackModules
   const hasRunningReports = reports.some((report) => ['pending', 'processing'].includes(report.status))
+  const hasRunningMediaRuns = mediaRuns.some((run) => ['pending', 'processing'].includes(run.status))
   const isSuperAdmin = user?.role === 'super_admin'
 
   async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -220,9 +284,10 @@ function App() {
 
   const loadDashboard = useCallback(async (nextToken = token) => {
     const headers = { Authorization: `Bearer ${nextToken}`, Accept: 'application/json', 'Content-Type': 'application/json' }
-    const [moduleResponse, reportResponse] = await Promise.all([
+    const [moduleResponse, reportResponse, mediaResponse] = await Promise.all([
       fetch(`${API_BASE}/modules`, { headers }).then((response) => response.json()),
       fetch(`${API_BASE}/screening-reports`, { headers }).then((response) => response.json()),
+      fetch(`${API_BASE}/media-monitoring/runs`, { headers }).then((response) => response.json()).catch(() => ({ data: [] })),
     ])
 
     setModules(moduleResponse.modules ?? [])
@@ -233,6 +298,14 @@ function App() {
       if (!current) return nextReports[0] ?? null
 
       return nextReports.find((report: ScreeningReport) => report.id === current.id) ?? current
+    })
+
+    const nextMediaRuns = mediaResponse.data ?? []
+    setMediaRuns(nextMediaRuns)
+    setActiveMediaRun((current) => {
+      if (!current) return nextMediaRuns[0] ?? null
+
+      return nextMediaRuns.find((run: MediaMonitoringRun) => run.id === current.id) ?? current
     })
   }, [token])
 
@@ -250,13 +323,13 @@ function App() {
     if (!token || !user) return
 
     const interval = window.setInterval(() => {
-      if (view === 'screening' || view === 'reports' || hasRunningReports) {
+      if (view === 'screening' || view === 'reports' || view === 'media-monitoring' || hasRunningReports || hasRunningMediaRuns) {
         void loadDashboard()
       }
-    }, hasRunningReports ? 5000 : 15000)
+    }, hasRunningReports || hasRunningMediaRuns ? 5000 : 15000)
 
     return () => window.clearInterval(interval)
-  }, [token, user, view, hasRunningReports, loadDashboard])
+  }, [token, user, view, hasRunningReports, hasRunningMediaRuns, loadDashboard])
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -338,6 +411,68 @@ function App() {
       setError(caught instanceof Error ? caught.message : 'Gagal menghapus laporan.')
     } finally {
       setDeletingReportId(null)
+    }
+  }
+
+  async function handleRunMediaMonitoring(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError('')
+
+    if (!mediaKeyword.trim()) {
+      setError('Keyword monitoring wajib diisi.')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const data = await api<{ data: MediaMonitoringRun }>('/media-monitoring/run', {
+        method: 'POST',
+        body: JSON.stringify({ keyword: mediaKeyword }),
+      })
+      setActiveMediaRun(data.data)
+      setMediaRuns((current) => [data.data, ...current])
+      setView('media-monitoring')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Run media monitoring gagal.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function saveMediaRun(run: MediaMonitoringRun) {
+    const keyword = run.keyword?.keyword ?? 'media-monitoring'
+    const filename = `media-monitoring-${keyword.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}-${run.id}.json`
+    const blob = new Blob([JSON.stringify(run, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  async function deleteMediaRun(run: MediaMonitoringRun) {
+    const confirmed = window.confirm(`Hapus hasil monitoring "${run.keyword?.keyword ?? run.id}"?`)
+    if (!confirmed) return
+
+    setError('')
+    setDeletingMediaRunId(run.id)
+
+    try {
+      await api(`/media-monitoring/runs/${run.id}`, { method: 'DELETE' })
+      const nextRuns = mediaRuns.filter((item) => item.id !== run.id)
+      setMediaRuns(nextRuns)
+      setActiveMediaRun((currentActive) => {
+        if (currentActive?.id !== run.id) return currentActive
+
+        return nextRuns[0] ?? null
+      })
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Gagal menghapus hasil monitoring.')
+    } finally {
+      setDeletingMediaRunId(null)
     }
   }
 
@@ -471,6 +606,8 @@ function App() {
     setUser(null)
     setReports([])
     setActiveReport(null)
+    setMediaRuns([])
+    setActiveMediaRun(null)
     setView('modules')
   }
 
@@ -480,14 +617,15 @@ function App() {
         <section className="login-shell">
           <div className="login-copy">
             <div className="logo-lockup">
-              <span className="logo-mark"><Shield size={20} /></span>
+              <LogoMark />
               <div>
-                <strong>Political Intel</strong>
-                <small>AI Intelligence Platform</small>
+                <strong>SENA Intelligence</strong>
+                <small>Sentiment & Narrative Analytics</small>
               </div>
             </div>
-            <h1>Screening tokoh politik berbasis agent AI.</h1>
-            <p>Masuk untuk membuat laporan intelligence 12 bagian: profil, karier, jejak digital, kontroversi, sentimen, basis daerah, SWOT, skor, dan rekomendasi strategis.</p>
+            <img className="login-brand-mark" src={APP_LOGO} alt="SENA logo" />
+            <h1>Political intelligence berbasis agent AI.</h1>
+            <p>Masuk untuk menjalankan screening tokoh, media monitoring, analisis sentimen, dan insight narasi politik dalam satu dashboard operasional.</p>
           </div>
           <form className="login-panel" onSubmit={handleLogin}>
             <span className="panel-kicker">Secure Access</span>
@@ -507,18 +645,20 @@ function App() {
 
   return (
     <main className={dark ? 'app dark' : 'app'}>
-      <div className="app-shell">
-        <Sidebar
-          currentView={view}
-          isSuperAdmin={isSuperAdmin}
-          onNavigate={(nextView) => {
-            if (nextView === 'settings') {
-              void openSettings(nextView)
-              return
-            }
-            setView(nextView)
-          }}
-        />
+      <div className={view === 'modules' ? 'app-shell modules-shell' : 'app-shell'}>
+        {view !== 'modules' && (
+          <Sidebar
+            currentView={view}
+            isSuperAdmin={isSuperAdmin}
+            onNavigate={(nextView) => {
+              if (nextView === 'settings') {
+                void openSettings(nextView)
+                return
+              }
+              setView(nextView)
+            }}
+          />
+        )}
 
         <div className="main-pane">
           <Topbar
@@ -535,9 +675,14 @@ function App() {
             <ModulesPage
               modules={visibleModules}
               adminMenus={adminMenus}
-              isSuperAdmin={isSuperAdmin}
-              onOpenScreening={() => setView('screening')}
-              onOpenSettings={() => void openSettings('settings')}
+              onOpenModule={(module) => {
+                if (module.slug === 'media-monitoring') {
+                  setView('media-monitoring')
+                  return
+                }
+
+                setView('screening')
+              }}
             />
           )}
 
@@ -553,6 +698,21 @@ function App() {
               onPickReport={setActiveReport}
               onSaveReport={saveReport}
               onSubjectChange={setSubjectName}
+            />
+          )}
+
+          {view === 'media-monitoring' && (
+            <MediaMonitoringPage
+              activeRun={activeMediaRun}
+              deletingRunId={deletingMediaRunId}
+              keyword={mediaKeyword}
+              loading={loading}
+              runs={mediaRuns}
+              onDeleteRun={deleteMediaRun}
+              onKeywordChange={setMediaKeyword}
+              onPickRun={setActiveMediaRun}
+              onRun={handleRunMediaMonitoring}
+              onSaveRun={saveMediaRun}
             />
           )}
 
@@ -598,11 +758,20 @@ function Sidebar({
   isSuperAdmin: boolean
   onNavigate: (view: View) => void
 }) {
-  const nav = [
-    { key: 'modules' as const, label: 'Modules', icon: Layers },
-    { key: 'screening' as const, label: 'Screening Tokoh', icon: Search },
-    { key: 'reports' as const, label: 'Reports', icon: FileText },
-  ]
+  const isModuleView = currentView === 'screening' || currentView === 'media-monitoring' || currentView === 'reports'
+  const activeModule = currentView === 'media-monitoring'
+    ? { key: 'media-monitoring' as const, label: 'Media Monitoring', icon: Globe }
+    : currentView === 'reports'
+      ? { key: 'reports' as const, label: 'Reports', icon: FileText }
+      : { key: 'screening' as const, label: 'Screening Tokoh', icon: Search }
+  const nav = isModuleView
+    ? [
+        { key: currentView, label: activeModule.label, icon: activeModule.icon, locked: true },
+        { key: 'modules' as const, label: 'Kembali ke Modules', icon: Layers },
+      ]
+    : [
+        { key: 'modules' as const, label: 'Modules', icon: Layers },
+      ]
   const adminNav = [
     { key: 'settings' as const, label: 'Agent Settings', icon: Settings },
   ]
@@ -610,10 +779,10 @@ function Sidebar({
   return (
     <aside className="sidebar">
       <div className="logo-lockup sidebar-logo">
-        <span className="logo-mark"><Shield size={20} /></span>
+        <LogoMark />
         <div>
-          <strong>Political Intel</strong>
-          <small>AI Intelligence Platform</small>
+          <strong>SENA</strong>
+          <small>Political Intelligence</small>
         </div>
       </div>
 
@@ -624,7 +793,7 @@ function Sidebar({
             <button
               className={currentView === item.key ? 'active' : ''}
               key={item.key}
-              onClick={() => onNavigate(item.key)}
+              onClick={() => !item.locked && onNavigate(item.key)}
             >
               <Icon size={17} /> {item.label}
             </button>
@@ -675,9 +844,12 @@ function Topbar({
 }) {
   return (
     <header className="topbar">
-      <div>
-        <strong>{viewTitle(view)}</strong>
-        <small>MVP Political Intelligence Platform</small>
+      <div className="topbar-title">
+        <LogoMark compact />
+        <div>
+          <strong>{viewTitle(view)}</strong>
+          <small>SENA Political Intelligence Platform</small>
+        </div>
       </div>
       <div className="topbar-actions">
         <span className={user.role === 'super_admin' ? 'role-pill super' : 'role-pill'}>{user.role.replace('_', ' ')}</span>
@@ -691,18 +863,22 @@ function Topbar({
   )
 }
 
+function LogoMark({ compact = false }: { compact?: boolean }) {
+  return (
+    <span className={compact ? 'logo-mark compact' : 'logo-mark'}>
+      <img src={APP_LOGO} alt="SENA logo" />
+    </span>
+  )
+}
+
 function ModulesPage({
   modules,
   adminMenus,
-  isSuperAdmin,
-  onOpenScreening,
-  onOpenSettings,
+  onOpenModule,
 }: {
   modules: ModuleItem[]
   adminMenus: string[]
-  isSuperAdmin: boolean
-  onOpenScreening: () => void
-  onOpenSettings: () => void
+  onOpenModule: (module: ModuleItem) => void
 }) {
   return (
     <section className="page">
@@ -711,9 +887,6 @@ function ModulesPage({
           <h1>Pilih Modul Intelligence</h1>
           <p>Mulai dari modul Screening Tokoh. Modul lain dapat ditambahkan bertahap setelah MVP stabil.</p>
         </div>
-        {isSuperAdmin && (
-          <button className="secondary-cta" onClick={onOpenSettings}><Settings size={16} /> Agent Settings</button>
-        )}
       </div>
 
       <div className="module-grid">
@@ -725,7 +898,7 @@ function ModulesPage({
               key={module.slug}
               className={isActive ? 'module-card active-module' : 'module-card'}
               disabled={!isActive}
-              onClick={onOpenScreening}
+              onClick={() => onOpenModule(module)}
             >
               <div className="module-card-top">
                 <span className="module-icon"><Icon size={20} /></span>
@@ -825,6 +998,224 @@ function ScreeningPage({
         />
       </div>
     </section>
+  )
+}
+
+function MediaMonitoringPage({
+  activeRun,
+  deletingRunId,
+  keyword,
+  loading,
+  runs,
+  onDeleteRun,
+  onKeywordChange,
+  onPickRun,
+  onRun,
+  onSaveRun,
+}: {
+  activeRun: MediaMonitoringRun | null
+  deletingRunId: number | null
+  keyword: string
+  loading: boolean
+  runs: MediaMonitoringRun[]
+  onDeleteRun: (run: MediaMonitoringRun) => void
+  onKeywordChange: (value: string) => void
+  onPickRun: (run: MediaMonitoringRun) => void
+  onRun: (event: FormEvent<HTMLFormElement>) => void
+  onSaveRun: (run: MediaMonitoringRun) => void
+}) {
+  return (
+    <section className="screening-page">
+      <div className="page-heading compact">
+        <div>
+          <h1>Media Monitoring</h1>
+          <p>Input keyword, lalu agent memantau berita nasional, media lokal Papua, sosial publik, Google Search, dan Google Trends di latar belakang.</p>
+        </div>
+      </div>
+
+      <div className="screening-layout">
+        <aside className="control-panel">
+          <form onSubmit={onRun} className="screening-form">
+            <label>Keyword</label>
+            <div className="search-input">
+              <Globe size={16} />
+              <input value={keyword} onChange={(event) => onKeywordChange(event.target.value)} placeholder="Contoh: PSI Papua" />
+            </div>
+            <button disabled={loading}><Search size={16} /> {loading ? 'Masuk antrian...' : 'Run Monitoring'}</button>
+            <p className="hint">Monitoring berjalan seperti cron job/background worker. Hasil akan refresh otomatis.</p>
+          </form>
+
+          <div className="history">
+            <div className="mini-heading">
+              <h3>Monitoring Runs</h3>
+              <span>{runs.length} hasil</span>
+            </div>
+            {runs.length === 0 && <p>Belum ada hasil monitoring.</p>}
+            {runs.map((run) => (
+              <div className={activeRun?.id === run.id ? 'history-row selected' : 'history-row'} key={run.id}>
+                <button onClick={() => onPickRun(run)}>
+                  <span>{run.keyword?.keyword ?? `Run #${run.id}`}</span>
+                  <small>{mediaStatusLabel(run)} {run.total_items ? `- ${run.total_items} item` : ''}</small>
+                </button>
+                <button
+                  className="mini-danger"
+                  disabled={deletingRunId === run.id}
+                  onClick={() => onDeleteRun(run)}
+                  title="Hapus hasil"
+                  type="button"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <MediaMonitoringReport
+          deletingRunId={deletingRunId}
+          onDeleteRun={onDeleteRun}
+          onSaveRun={onSaveRun}
+          run={activeRun}
+        />
+      </div>
+    </section>
+  )
+}
+
+function MediaMonitoringReport({
+  deletingRunId,
+  onDeleteRun,
+  onSaveRun,
+  run,
+}: {
+  deletingRunId: number | null
+  onDeleteRun: (run: MediaMonitoringRun) => void
+  onSaveRun: (run: MediaMonitoringRun) => void
+  run: MediaMonitoringRun | null
+}) {
+  if (!run) {
+    return (
+      <article className="report empty-state">
+        <Globe size={30} />
+        <h2>Belum ada monitoring aktif</h2>
+        <p>Masukkan keyword untuk mulai memantau media dan percakapan publik.</p>
+      </article>
+    )
+  }
+
+  if (run.status !== 'completed') {
+    return (
+      <article className="report empty-state">
+        <div className="report-actions floating-actions">
+          <button
+            className="danger"
+            disabled={deletingRunId === run.id}
+            onClick={() => onDeleteRun(run)}
+            type="button"
+          >
+            <Trash2 size={15} /> Hapus
+          </button>
+        </div>
+        {run.status === 'failed' ? <AlertTriangle size={30} /> : <Activity size={30} />}
+        <span className={`status-badge ${run.status}`}>{mediaStatusLabel(run)}</span>
+        <h2>{run.keyword?.keyword ?? `Run #${run.id}`}</h2>
+        <p>{mediaStatusDescription(run)}</p>
+        {run.error_message && <p className="error">{run.error_message}</p>}
+      </article>
+    )
+  }
+
+  const insight = run.insight
+  const recommendations = insight?.strategic_recommendation ?? {}
+
+  return (
+    <article className="report">
+      <header className="report-header">
+        <div className="report-header-top">
+          <div>
+            <span className="status-badge completed">Media Monitoring</span>
+            <small>Generated at: {new Date(run.created_at).toLocaleString('id-ID')}</small>
+          </div>
+          <div className="report-actions">
+            <button onClick={() => onSaveRun(run)} type="button"><Download size={15} /> Simpan</button>
+            <button
+              className="danger"
+              disabled={deletingRunId === run.id}
+              onClick={() => onDeleteRun(run)}
+              type="button"
+            >
+              <Trash2 size={15} /> Hapus
+            </button>
+          </div>
+        </div>
+        <h1>{run.keyword?.keyword ?? `Run #${run.id}`}</h1>
+        <p>{insight?.executive_summary ?? 'Ringkasan monitoring belum tersedia.'}</p>
+      </header>
+
+      <div className="metric-grid media-metrics">
+        <Metric label="Total Data" value={`${run.total_items}`} icon={Database} />
+        <Metric label="Portal Berita" value={`${run.news_count}`} icon={FileText} />
+        <Metric label="Sosial Publik" value={`${run.social_count}`} icon={Globe} />
+        <Metric label="Risiko" value={run.risk_level ?? '-'} icon={AlertTriangle} />
+        <Metric label="Positif" value={`${run.positive_count}`} icon={TrendingUp} />
+        <Metric label="Netral" value={`${run.neutral_count}`} icon={Activity} />
+        <Metric label="Negatif" value={`${run.negative_count}`} icon={AlertTriangle} />
+        <Metric label="Google Trends" value={`${run.google_trends_count}`} icon={BarChart3} />
+      </div>
+
+      <ReportSection icon={<TrendingUp size={17} />} title="Analisis Sentimen">
+        <div className="sentiment-bars">
+          <SentimentBar label="Positif" value={run.positive_count} total={run.total_items} />
+          <SentimentBar label="Netral" value={run.neutral_count} total={run.total_items} />
+          <SentimentBar label="Negatif" value={run.negative_count} total={run.total_items} />
+        </div>
+      </ReportSection>
+
+      <ReportSection icon={<Activity size={17} />} title="Isu Dominan">
+        <CompactList items={(insight?.dominant_issues_json ?? []).map((issue) => `${issue.issue} - ${issue.count ?? 0} item - ${issue.sentiment ?? 'neutral'} - risk ${issue.risk_level ?? 'low'}`)} empty="Belum ada isu dominan yang terdeteksi." />
+      </ReportSection>
+
+      <ReportSection icon={<User size={17} />} title="Aktor dan Sumber Paling Aktif">
+        <div className="two-column-list">
+          <CompactList items={(insight?.top_actors_json ?? []).map((actor) => `${actor.name} (${actor.type ?? 'entity'}) - ${actor.mentions ?? 0} mention`)} empty="Aktor belum terdeteksi." />
+          <CompactList items={(insight?.top_sources_json ?? []).map((source) => `${source.name} (${source.source_type ?? 'source'}) - ${source.item_count ?? 0} item`)} empty="Sumber aktif belum terdeteksi." />
+        </div>
+      </ReportSection>
+
+      <ReportSection icon={<BarChart3 size={17} />} title="Tren dan Google Trends">
+        <p>{insight?.trend_json?.summary ?? 'Tren pemberitaan belum tersedia penuh.'}</p>
+        <p>{insight?.google_trends_json?.summary ?? 'Google Trends belum tersedia. Data Trends hanya indikator minat pencarian, bukan elektabilitas.'}</p>
+      </ReportSection>
+
+      <ReportSection icon={<AlertTriangle size={17} />} title="Risiko Reputasi">
+        {insight?.risk_assessment ?? 'Risiko reputasi belum dapat dinilai penuh.'}
+      </ReportSection>
+
+      <ReportSection icon={<Settings size={17} />} title="Rekomendasi Respon">
+        <Swot title="Prioritas Tinggi" items={recommendations.high_priority ?? []} />
+        <Swot title="Prioritas Sedang" items={recommendations.medium_priority ?? []} />
+        <Swot title="Prioritas Rendah" items={recommendations.low_priority ?? []} />
+      </ReportSection>
+
+      <ReportSection icon={<FileText size={17} />} title="Daftar Artikel/Post">
+        <div className="media-item-list">
+          {(run.items ?? []).length === 0 && <p>Belum ada artikel/post yang tersimpan.</p>}
+          {(run.items ?? []).map((item) => (
+            <div className="media-item-row" key={item.id}>
+              <div>
+                <strong>{item.title ?? 'Tanpa judul'}</strong>
+                <small>{item.source?.name ?? item.source_type} - {item.published_at ? new Date(item.published_at).toLocaleDateString('id-ID') : 'tanggal tidak tersedia'} - {item.platform}</small>
+                <p>{item.analysis?.summary ?? item.snippet ?? 'Ringkasan belum tersedia.'}</p>
+              </div>
+              <span className={`status-badge ${item.analysis?.sentiment === 'negative' ? 'failed' : 'completed'}`}>{item.analysis?.sentiment ?? 'neutral'}</span>
+              <span className="status-badge">{item.analysis?.issue_category ?? '-'}</span>
+              <span className="status-badge">{item.analysis?.risk_level ?? '-'}</span>
+              {item.url && <a href={item.url} target="_blank" rel="noreferrer">Open Source</a>}
+            </div>
+          ))}
+        </div>
+      </ReportSection>
+    </article>
   )
 }
 
@@ -1207,6 +1598,7 @@ function emptyDraft(): AgentDraft {
 
 function viewTitle(view: View) {
   if (view === 'screening') return 'Screening Tokoh'
+  if (view === 'media-monitoring') return 'Media Monitoring'
   if (view === 'reports') return 'Reports History'
   if (view === 'settings') return 'Agent Settings'
 
@@ -1244,6 +1636,50 @@ function statusDescription(report: ScreeningReport) {
   }
 
   return 'Laporan selesai.'
+}
+
+function mediaStatusLabel(run: MediaMonitoringRun) {
+  if (run.status === 'pending') return 'Antri'
+  if (run.status === 'processing') return 'Monitoring'
+  if (run.status === 'failed') return 'Gagal'
+
+  return 'Selesai'
+}
+
+function mediaStatusDescription(run: MediaMonitoringRun) {
+  if (run.status === 'pending') {
+    return 'Keyword sudah masuk antrian. Worker media monitoring akan memproses di latar belakang.'
+  }
+
+  if (run.status === 'processing') {
+    return 'Keyword sedang dimonitor. Agent sedang membaca sumber publik, mengekstrak data, dan menyusun insight.'
+  }
+
+  if (run.status === 'failed') {
+    return 'Monitoring gagal diproses. Cek konfigurasi model/API, FastAPI, atau worker queue.'
+  }
+
+  return 'Monitoring selesai.'
+}
+
+function SentimentBar({ label, value, total }: { label: string; value: number; total: number }) {
+  const percent = total > 0 ? Math.round((value / total) * 100) : 0
+
+  return (
+    <div className="sentiment-bar">
+      <div>
+        <strong>{label}</strong>
+        <span>{value} item - {percent}%</span>
+      </div>
+      <i><b style={{ width: `${percent}%` }} /></i>
+    </div>
+  )
+}
+
+function CompactList({ empty, items }: { empty: string; items: string[] }) {
+  if (items.length === 0) return <p>{empty}</p>
+
+  return <ul className="compact-list">{items.map((item) => <li key={item}>{item}</li>)}</ul>
 }
 
 function ReportSection({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {

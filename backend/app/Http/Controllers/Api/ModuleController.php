@@ -15,7 +15,7 @@ class ModuleController extends Controller
                 ['slug' => 'monitoring-isu', 'name' => 'Monitoring Isu', 'description' => 'Segera hadir.', 'status' => 'coming_soon'],
                 ['slug' => 'analisis-sentimen', 'name' => 'Analisis Sentimen', 'description' => 'Segera hadir.', 'status' => 'coming_soon'],
                 ['slug' => 'peta-elektoral', 'name' => 'Peta Elektoral', 'description' => 'Segera hadir.', 'status' => 'coming_soon'],
-                ['slug' => 'media-monitoring', 'name' => 'Media Monitoring', 'description' => 'Segera hadir.', 'status' => 'coming_soon'],
+                ['slug' => 'media-monitoring', 'name' => 'Media Monitoring', 'description' => 'Pantau berita, percakapan publik, sentimen, isu dominan, aktor, tren, dan risiko reputasi.', 'status' => 'active'],
                 ['slug' => 'strategi-kampanye', 'name' => 'Strategi Kampanye', 'description' => 'Segera hadir.', 'status' => 'coming_soon'],
                 ['slug' => 'quick-count-internal', 'name' => 'Quick Count Internal', 'description' => 'Segera hadir.', 'status' => 'coming_soon'],
             ],
