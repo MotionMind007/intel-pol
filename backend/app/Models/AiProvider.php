@@ -8,9 +8,13 @@ class AiProvider extends Model
 {
     protected $fillable = [
         'name',
+        'provider_type',
         'base_url',
         'api_key_encrypted',
         'status',
+        'rate_limit_per_minute',
+        'cost_limit_per_day',
+        'timeout_seconds',
         'created_by',
         'updated_by',
     ];
@@ -28,6 +32,9 @@ class AiProvider extends Model
     {
         return [
             'api_key_encrypted' => 'encrypted',
+            'cost_limit_per_day' => 'decimal:4',
+            'timeout_seconds' => 'integer',
+            'rate_limit_per_minute' => 'integer',
         ];
     }
 

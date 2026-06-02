@@ -38,6 +38,7 @@ class DatabaseSeeder extends Seeder
         $provider = AiProvider::updateOrCreate(
             ['name' => 'OpenAI Compatible'],
             [
+                'provider_type' => 'text',
                 'base_url' => 'http://ai-service:8000/mock-openai/v1',
                 'api_key_encrypted' => 'local-dev-key',
                 'status' => 'active',
@@ -49,6 +50,7 @@ class DatabaseSeeder extends Seeder
         $model = AiModel::updateOrCreate(
             ['provider_id' => $provider->id, 'model_name' => 'political-screening-mock'],
             [
+                'modality' => 'text',
                 'display_name' => 'Political Screening Mock',
                 'context_window' => 8000,
                 'is_active' => true,
@@ -846,6 +848,271 @@ PROMPT;
                 ['name' => $source['name']],
                 $source + ['is_active' => true],
             );
+        }
+
+        $policyPrompt = <<<'PROMPT'
+You are a Policy Intelligence Analyst for SENA.
+
+CORE RULES:
+- Semua output wajib Bahasa Indonesia.
+- Return structured JSON only, no Markdown outside JSON.
+- Jangan mengarang fakta, sumber, URL, angka skor, atau klaim dukungan publik.
+- Pisahkan fakta terverifikasi, dugaan, opini, asumsi, dan framing media.
+- Jika dokumen resmi kebijakan tidak ditemukan, tulis jelas "data resmi kebijakan belum ditemukan".
+- Respon media sosial adalah digital public response, bukan survei populasi.
+- Google Trends adalah indikator minat pencarian, bukan dukungan publik atau elektabilitas.
+- Setiap dampak positif dan negatif wajib menjelaskan kenapa dampak itu positif/negatif.
+- Wajib membuat skenario optimis, moderat, dan buruk.
+- Wajib memberi policy score 0-100 dengan alasan.
+- Fokus konteks Indonesia dan Papua jika kebijakan menyebut wilayah Papua: Otsus, DOB, wilayah terpencil, adat, gereja, akses layanan, distribusi, keamanan, infrastruktur, APBD/APBN, BPS, KPU/Bawaslu jika relevan.
+PROMPT;
+
+        $policyAgent = Agent::updateOrCreate(
+            ['name' => 'Policy Intelligence Agent'],
+            [
+                'role_description' => 'Policy Intelligence Orchestrator',
+                'system_prompt' => $policyPrompt,
+                'provider_id' => $agentProvider->id,
+                'model_id' => $agentModel->id,
+                'temperature' => 0.35,
+                'max_tokens' => 14000,
+                'status' => 'active',
+            ],
+        );
+
+        $policySkills = [
+            ['name' => 'Government Source Search', 'slug' => 'government-source-search', 'description' => 'Mencari dokumen resmi kebijakan dan sumber pemerintah.', 'category' => 'policy_intelligence', 'risk_level' => 'medium', 'technology_type' => 'Search API / official website search', 'prompt_content' => 'Prioritaskan sumber resmi: peraturan, kementerian/lembaga, pemda, BPS, APBD/RPJMD/RKPD, siaran pers, dan dokumen kebijakan. Jika tidak ditemukan, nyatakan keterbatasan.'],
+            ['name' => 'Policy Document Reader', 'slug' => 'policy-document-reader', 'description' => 'Meringkas isi, tujuan, target, status, dan indikator kebijakan.', 'category' => 'policy_intelligence', 'risk_level' => 'low', 'technology_type' => 'Document parser / LLM summary', 'prompt_content' => 'Baca dokumen kebijakan untuk nama kebijakan, level, wilayah, instansi pelaksana, status, target penerima, tujuan formal, anggaran, dan indikator keberhasilan jika tersedia.'],
+            ['name' => 'Public Response Collector', 'slug' => 'public-response-collector', 'description' => 'Mengumpulkan respon publik dari berita, media monitoring, dan sosial publik.', 'category' => 'policy_intelligence', 'risk_level' => 'medium', 'technology_type' => 'Media Monitoring DB / search / public web', 'prompt_content' => 'Kelompokkan respon mendukung, menolak, netral, pertanyaan, keluhan, dan saran. Selalu sebut basis data dan jangan klaim sebagai representasi seluruh masyarakat.'],
+            ['name' => 'Media Framing Analysis', 'slug' => 'media-framing-analysis', 'description' => 'Menganalisis framing media terhadap kebijakan.', 'category' => 'policy_intelligence', 'risk_level' => 'medium', 'technology_type' => 'LLM narrative analysis', 'prompt_content' => 'Identifikasi headline/narasi dominan, media kritis, media netral, isu implementasi, dan angle pro-kontra.'],
+            ['name' => 'Stakeholder Mapping', 'slug' => 'stakeholder-mapping', 'description' => 'Memetakan stakeholder, posisi, dan pengaruh.', 'category' => 'policy_intelligence', 'risk_level' => 'medium', 'technology_type' => 'NER / influence scoring', 'prompt_content' => 'Stakeholder: pemerintah pusat/daerah, DPR/DPRD, partai, tokoh adat, tokoh agama, akademisi, LSM, media, komunitas terdampak, oposisi. Posisi: support/oppose/neutral/unclear.'],
+            ['name' => 'Policy Impact Analysis', 'slug' => 'policy-impact-analysis', 'description' => 'Menilai dampak sosial, ekonomi, politik, dan komunikasi.', 'category' => 'policy_intelligence', 'risk_level' => 'medium', 'technology_type' => 'LLM reasoning', 'prompt_content' => 'Untuk setiap dampak positif/negatif, jelaskan kenapa positif/negatif dan data pendukungnya. Bahas distribusi, anggaran, SDM, infrastruktur, data penerima, wilayah terpencil, dan pengawasan.'],
+            ['name' => 'Scenario Simulation', 'slug' => 'scenario-simulation', 'description' => 'Mensimulasikan skenario optimis, moderat, dan buruk.', 'category' => 'policy_intelligence', 'risk_level' => 'medium', 'technology_type' => 'Reasoning model', 'prompt_content' => 'Buat 3 skenario dengan indikator: public acceptance score, implementation risk, political risk, social impact, dan media risk.'],
+            ['name' => 'Policy Scoring', 'slug' => 'policy-scoring', 'description' => 'Memberi skor kebijakan 0-100 berbasis indikator.', 'category' => 'policy_intelligence', 'risk_level' => 'medium', 'technology_type' => 'Weighted scoring + LLM', 'prompt_content' => 'Indikator: public acceptance, social benefit, implementation feasibility, budget risk, political risk, media risk, equity/fairness, long-term impact. Kategori: 85-100 Sangat Layak, 70-84 Layak dengan Perbaikan, 55-69 Perlu Kajian Lanjutan, <55 Risiko Tinggi.'],
+            ['name' => 'Policy Recommendation', 'slug' => 'policy-recommendation', 'description' => 'Menyusun rekomendasi perbaikan kebijakan dan komunikasi publik.', 'category' => 'policy_intelligence', 'risk_level' => 'medium', 'technology_type' => 'LLM strategy', 'prompt_content' => 'Buat rekomendasi high/medium/low priority: perbaikan data penerima, pengawasan, koordinasi pemda, kanal aduan, pilot project, narasi utama, pesan per segmen, kanal lokal, dan respon kritik.'],
+        ];
+
+        foreach ($policySkills as $skillData) {
+            $skill = Skill::updateOrCreate(
+                ['slug' => $skillData['slug']],
+                $skillData,
+            );
+
+            $policyAgent->skills()->syncWithoutDetaching([
+                $skill->id => [
+                    'enabled' => true,
+                    'requires_approval' => $skillData['risk_level'] === 'high',
+                    'daily_limit' => null,
+                ],
+            ]);
+        }
+
+        if ($browserSkill) {
+            $policyAgent->skills()->syncWithoutDetaching([
+                $browserSkill->id => [
+                    'enabled' => true,
+                    'requires_approval' => true,
+                    'daily_limit' => null,
+                ],
+            ]);
+        }
+
+        $campaignPrompt = <<<'PROMPT'
+You are a Campaign Strategy Agent for SENA.
+
+CORE RULES:
+- Semua output wajib Bahasa Indonesia.
+- Return structured JSON only, no Markdown outside JSON.
+- Buat strategi kampanye yang operasional untuk tokoh, partai, kebijakan, atau isu.
+- Gunakan insight dari screening tokoh, media monitoring, policy intelligence, respon publik, konteks wilayah, dan sumber publik bila tersedia.
+- Jangan mengarang survei, elektabilitas, dukungan tokoh, endorsement, data demografi, sumber, URL, atau fakta.
+- Jika data tidak tersedia, tulis jelas "data belum ditemukan" dan pakai asumsi strategis yang diberi label sebagai asumsi.
+- Dilarang menyusun black campaign, fitnah, disinformasi, hoaks, ujaran kebencian, provokasi SARA, atau taktik ilegal.
+- Mitigasi isu negatif harus berbasis fakta, klarifikasi, bukti pendukung, dan narasi yang etis.
+- Output harus mencakup positioning, target segment, isu prioritas, narasi, pesan kunci, strategi wilayah, strategi media sosial, media lokal/PR, kampanye darat, mitigasi, rekomendasi konten, action plan 30 hari, KPI, risiko, dan sumber.
+PROMPT;
+
+        $campaignAgent = Agent::updateOrCreate(
+            ['name' => 'Campaign Strategy Agent'],
+            [
+                'role_description' => 'Strategic Campaign Intelligence Orchestrator',
+                'system_prompt' => $campaignPrompt,
+                'provider_id' => $agentProvider->id,
+                'model_id' => $agentModel->id,
+                'temperature' => 0.38,
+                'max_tokens' => 16000,
+                'status' => 'active',
+            ],
+        );
+
+        $campaignSkills = [
+            ['name' => 'Campaign Strategy Orchestrator', 'slug' => 'campaign-strategy-orchestrator', 'description' => 'Mengorkestrasi seluruh insight menjadi strategi kampanye.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'LLM orchestration', 'prompt_content' => 'Gabungkan data screening, media monitoring, policy intelligence, respon publik, dan konteks wilayah menjadi strategi yang bisa dieksekusi.'],
+            ['name' => 'Campaign Context Analysis', 'slug' => 'campaign-context-analysis', 'description' => 'Menganalisis konteks objek, tujuan, wilayah, peluang, dan hambatan kampanye.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'LLM reasoning', 'prompt_content' => 'Jelaskan konteks kampanye, data yang tersedia, data yang belum tersedia, asumsi strategis, dan implikasi bagi strategi.'],
+            ['name' => 'Candidate Party Positioning', 'slug' => 'candidate-party-positioning', 'description' => 'Menyusun positioning tokoh, partai, kebijakan, atau isu.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Political positioning', 'prompt_content' => 'Buat statement positioning, identitas inti, diferensiasi, dan perception gap secara spesifik.'],
+            ['name' => 'Voter Segment Mapping', 'slug' => 'voter-segment-mapping', 'description' => 'Memetakan target audiens atau segmentasi pemilih.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Segmentation framework', 'prompt_content' => 'Segmentasi harus memuat kebutuhan, isu utama, pesan, channel, dan prioritas. Jangan mengklaim ukuran segmen tanpa data.'],
+            ['name' => 'Issue Priority Analysis', 'slug' => 'issue-priority-analysis', 'description' => 'Menentukan isu prioritas yang harus diangkat atau dimitigasi.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Issue scoring', 'prompt_content' => 'Prioritaskan isu berdasarkan relevansi tujuan kampanye, risiko, peluang narasi, dan konteks wilayah.'],
+            ['name' => 'Narrative Strategy', 'slug' => 'narrative-strategy', 'description' => 'Membuat narasi utama kampanye.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Narrative design', 'prompt_content' => 'Narasi utama harus singkat, positif, berbasis data, tidak menyerang kelompok, dan bisa diterjemahkan ke konten.'],
+            ['name' => 'Message Framing', 'slug' => 'message-framing', 'description' => 'Menyusun pesan kunci per target dan channel.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Message design', 'prompt_content' => 'Pesan kunci harus punya target, alasan, channel, dan tidak mengandung klaim palsu.'],
+            ['name' => 'Regional Strategy', 'slug' => 'regional-strategy', 'description' => 'Menyusun strategi wilayah prioritas.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Regional strategy', 'prompt_content' => 'Klasifikasi wilayah sebagai basis, swing, ekspansi, atau risiko jika data cukup. Jika tidak cukup, tulis asumsi.'],
+            ['name' => 'Media Strategy', 'slug' => 'campaign-media-strategy', 'description' => 'Menyusun strategi media sosial, media lokal, dan PR.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Media strategy', 'prompt_content' => 'Susun platform, style konten, frekuensi, format, hashtag, media prioritas, angle berita, agenda press release, dan respon berita negatif.'],
+            ['name' => 'Ground Campaign Planning', 'slug' => 'ground-campaign-planning', 'description' => 'Menyusun kampanye darat dan aktivasi komunitas.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Ground campaign framework', 'prompt_content' => 'Rancang kegiatan darat, target, wilayah, output, dan catatan pelaksanaan yang etis.'],
+            ['name' => 'Negative Issue Mitigation', 'slug' => 'negative-issue-mitigation', 'description' => 'Merancang mitigasi isu negatif berbasis fakta.', 'category' => 'campaign_strategy', 'risk_level' => 'high', 'technology_type' => 'Crisis communication', 'prompt_content' => 'Jangan black campaign. Respon harus berbasis klarifikasi, data, bukti, empati, dan pemulihan kepercayaan publik.'],
+            ['name' => 'Content Recommendation', 'slug' => 'campaign-content-recommendation', 'description' => 'Memberi rekomendasi konten kampanye.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Content planning', 'prompt_content' => 'Setiap konten harus punya hook, format, target, message, dan CTA. Hindari manipulasi, fitnah, dan klaim palsu.'],
+            ['name' => 'Action Plan 30 Days', 'slug' => 'campaign-action-plan-30-days', 'description' => 'Membuat timeline aksi 30 hari.', 'category' => 'campaign_strategy', 'risk_level' => 'medium', 'technology_type' => 'Planning', 'prompt_content' => 'Bagi action plan menjadi week_1 sampai week_4, dengan aktivitas konkret dan output yang bisa dicek.'],
+            ['name' => 'KPI Evaluation', 'slug' => 'campaign-kpi-evaluation', 'description' => 'Menentukan indikator keberhasilan kampanye.', 'category' => 'campaign_strategy', 'risk_level' => 'low', 'technology_type' => 'KPI framework', 'prompt_content' => 'KPI harus realistis: share of voice, sentiment, reach, engagement, jumlah pertemuan, kanal aduan, kualitas pemberitaan, dan respon stakeholder.'],
+        ];
+
+        foreach ($campaignSkills as $skillData) {
+            $skill = Skill::updateOrCreate(
+                ['slug' => $skillData['slug']],
+                $skillData,
+            );
+
+            $campaignAgent->skills()->syncWithoutDetaching([
+                $skill->id => [
+                    'enabled' => true,
+                    'requires_approval' => $skillData['risk_level'] === 'high',
+                    'daily_limit' => null,
+                ],
+            ]);
+        }
+
+        if ($browserSkill) {
+            $campaignAgent->skills()->syncWithoutDetaching([
+                $browserSkill->id => [
+                    'enabled' => true,
+                    'requires_approval' => true,
+                    'daily_limit' => null,
+                ],
+            ]);
+        }
+
+        $imageProvider = AiProvider::updateOrCreate(
+            ['name' => 'Creative Image Provider'],
+            [
+                'provider_type' => 'image',
+                'base_url' => 'http://ai-service:8000/mock-image',
+                'api_key_encrypted' => 'local-image-key',
+                'status' => 'active',
+                'rate_limit_per_minute' => 20,
+                'cost_limit_per_day' => 25,
+                'timeout_seconds' => 3600,
+                'created_by' => 1,
+                'updated_by' => 1,
+            ],
+        );
+
+        AiModel::updateOrCreate(
+            ['provider_id' => $imageProvider->id, 'model_name' => 'creative-image-mock'],
+            [
+                'modality' => 'image',
+                'display_name' => 'Creative Image Mock',
+                'capabilities_json' => [
+                    'supports_text_to_image' => true,
+                    'supports_negative_prompt' => true,
+                    'supports_1_1' => true,
+                    'supports_16_9' => true,
+                    'supports_9_16' => true,
+                    'supports_4_5' => true,
+                    'max_resolution' => '1920x1080',
+                    'max_outputs' => 4,
+                    'supported_qualities' => ['standard', 'high'],
+                ],
+                'unit_price' => 0.08,
+                'is_active' => true,
+            ],
+        );
+
+        $videoProvider = AiProvider::updateOrCreate(
+            ['name' => 'Creative Video Provider'],
+            [
+                'provider_type' => 'video',
+                'base_url' => 'http://ai-service:8000/mock-video',
+                'api_key_encrypted' => 'local-video-key',
+                'status' => 'active',
+                'rate_limit_per_minute' => 5,
+                'cost_limit_per_day' => 50,
+                'timeout_seconds' => 7200,
+                'created_by' => 1,
+                'updated_by' => 1,
+            ],
+        );
+
+        AiModel::updateOrCreate(
+            ['provider_id' => $videoProvider->id, 'model_name' => 'creative-video-mock'],
+            [
+                'modality' => 'video',
+                'display_name' => 'Creative Video Mock',
+                'capabilities_json' => [
+                    'supports_text_to_video' => true,
+                    'supports_storyboard_to_video' => true,
+                    'supports_negative_prompt' => true,
+                    'supports_9_16' => true,
+                    'supports_16_9' => true,
+                    'supports_1_1' => true,
+                    'max_duration' => 30,
+                    'max_resolution' => '1080p',
+                    'supported_fps' => ['24', '30'],
+                ],
+                'unit_price' => 0.35,
+                'is_active' => true,
+            ],
+        );
+
+        $creativePrompt = <<<'PROMPT'
+You are the Creative Studio Agent for SENA.
+
+CORE RULES:
+- Semua output wajib Bahasa Indonesia.
+- Return structured JSON only.
+- Buat creative brief, hook, caption, CTA, script, storyboard, image prompt, dan video prompt untuk kampanye politik berbasis data.
+- Pisahkan fakta dan narasi kreatif.
+- Jangan membuat fitnah, disinformasi, klaim palsu, hate speech, hasutan SARA, manipulasi data, atau deepfake tokoh nyata tanpa izin.
+- Semua prompt visual harus aman, etis, profesional, dan siap review manual.
+- Konten yang menyebut klaim faktual harus punya catatan sumber atau safety note.
+PROMPT;
+
+        $creativeAgent = Agent::updateOrCreate(
+            ['name' => 'Creative Studio Agent'],
+            [
+                'role_description' => 'Production Creative Generator and Safety Reviewer',
+                'system_prompt' => $creativePrompt,
+                'provider_id' => $agentProvider->id,
+                'model_id' => $agentModel->id,
+                'temperature' => 0.55,
+                'max_tokens' => 16000,
+                'status' => 'active',
+            ],
+        );
+
+        $creativeSkills = [
+            ['name' => 'Creative Brief Generator', 'slug' => 'creative-brief-generator', 'description' => 'Membuat brief, big idea, dan objective konten.', 'category' => 'creative_studio', 'risk_level' => 'low', 'technology_type' => 'Text LLM', 'prompt_content' => 'Buat creative brief operasional berdasarkan campaign object, objective, audience, platform, dan tone.'],
+            ['name' => 'Hook Caption CTA Generator', 'slug' => 'hook-caption-cta-generator', 'description' => 'Membuat hook, caption, CTA, dan copy per platform.', 'category' => 'creative_studio', 'risk_level' => 'low', 'technology_type' => 'Text LLM', 'prompt_content' => 'Copy harus singkat, kuat, tidak misleading, dan punya variasi untuk TikTok/Instagram/Facebook/YouTube.'],
+            ['name' => 'Script Storyboard Generator', 'slug' => 'script-storyboard-generator', 'description' => 'Membuat script video dan storyboard scene by scene.', 'category' => 'creative_studio', 'risk_level' => 'medium', 'technology_type' => 'Text LLM', 'prompt_content' => 'Buat voiceover, on-screen text, visual direction, dan durasi per scene.'],
+            ['name' => 'Image Prompt Generator', 'slug' => 'image-prompt-generator', 'description' => 'Membuat prompt gambar dan negative prompt.', 'category' => 'creative_studio', 'risk_level' => 'medium', 'technology_type' => 'Prompt LLM', 'prompt_content' => 'Prompt harus mencantumkan objective, audience, platform, aspect ratio, style, tone, brand color, key message, scene, dan avoid.'],
+            ['name' => 'Video Prompt Generator', 'slug' => 'video-prompt-generator', 'description' => 'Membuat prompt video, camera movement, dan scene direction.', 'category' => 'creative_studio', 'risk_level' => 'medium', 'technology_type' => 'Prompt LLM', 'prompt_content' => 'Prompt video harus scene-based, menyebut durasi, camera style, on-screen text, motion, dan negative prompt.'],
+            ['name' => 'Political Safety Review', 'slug' => 'political-safety-review', 'description' => 'Mengecek disinformasi, fitnah, hate speech, SARA, dan deepfake.', 'category' => 'creative_studio', 'risk_level' => 'high', 'technology_type' => 'LLM safety', 'prompt_content' => 'Tandai konten yang perlu approval manual. Dilarang klaim palsu, manipulasi data, hasutan SARA, atau deepfake tanpa izin.'],
+            ['name' => 'Asset Manager', 'slug' => 'creative-asset-manager', 'description' => 'Mengelola metadata asset, approval, dan library.', 'category' => 'creative_studio', 'risk_level' => 'low', 'technology_type' => 'Storage metadata', 'prompt_content' => 'Simpan prompt, provider/model, cost, status, approval status, dan metadata asset.'],
+        ];
+
+        foreach ($creativeSkills as $skillData) {
+            $skill = Skill::updateOrCreate(['slug' => $skillData['slug']], $skillData);
+            $creativeAgent->skills()->syncWithoutDetaching([
+                $skill->id => [
+                    'enabled' => true,
+                    'requires_approval' => $skillData['risk_level'] === 'high',
+                    'daily_limit' => null,
+                ],
+            ]);
+        }
+
+        foreach ([
+            ['role' => 'super_admin', 'max_images_per_day' => 200, 'max_videos_per_day' => 30, 'max_video_duration' => 60, 'max_cost_per_day' => 250, 'requires_approval_above_cost' => 100],
+            ['role' => 'admin', 'max_images_per_day' => 100, 'max_videos_per_day' => 10, 'max_video_duration' => 30, 'max_cost_per_day' => 100, 'requires_approval_above_cost' => 25],
+            ['role' => 'analyst', 'max_images_per_day' => 20, 'max_videos_per_day' => 3, 'max_video_duration' => 10, 'max_cost_per_day' => 20, 'requires_approval_above_cost' => 5],
+            ['role' => 'viewer', 'max_images_per_day' => 0, 'max_videos_per_day' => 0, 'max_video_duration' => 0, 'max_cost_per_day' => 0, 'requires_approval_above_cost' => 0],
+        ] as $limit) {
+            \App\Models\CreativeUsageLimit::updateOrCreate(['role' => $limit['role']], $limit);
         }
     }
 }

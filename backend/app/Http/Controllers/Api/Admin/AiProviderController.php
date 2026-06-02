@@ -23,16 +23,24 @@ class AiProviderController extends Controller
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
+            'provider_type' => ['nullable', 'in:text,image,video,embedding,audio,browser,search'],
             'base_url' => ['required', 'url'],
             'api_key' => ['nullable', 'string', 'max:4000'],
             'status' => ['required', 'in:active,inactive'],
+            'rate_limit_per_minute' => ['nullable', 'integer', 'min:1'],
+            'cost_limit_per_day' => ['nullable', 'numeric', 'min:0'],
+            'timeout_seconds' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $provider = AiProvider::create([
             'name' => $data['name'],
+            'provider_type' => $data['provider_type'] ?? 'text',
             'base_url' => $data['base_url'],
             'api_key_encrypted' => $data['api_key'] ?? null,
             'status' => $data['status'],
+            'rate_limit_per_minute' => $data['rate_limit_per_minute'] ?? null,
+            'cost_limit_per_day' => $data['cost_limit_per_day'] ?? null,
+            'timeout_seconds' => $data['timeout_seconds'] ?? null,
             'created_by' => $request->user()->id,
             'updated_by' => $request->user()->id,
         ]);
@@ -47,15 +55,23 @@ class AiProviderController extends Controller
         $old = $aiProvider->toArray();
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
+            'provider_type' => ['nullable', 'in:text,image,video,embedding,audio,browser,search'],
             'base_url' => ['required', 'url'],
             'api_key' => ['nullable', 'string', 'max:4000'],
             'status' => ['required', 'in:active,inactive'],
+            'rate_limit_per_minute' => ['nullable', 'integer', 'min:1'],
+            'cost_limit_per_day' => ['nullable', 'numeric', 'min:0'],
+            'timeout_seconds' => ['nullable', 'integer', 'min:1'],
         ]);
 
         $update = [
             'name' => $data['name'],
+            'provider_type' => $data['provider_type'] ?? $aiProvider->provider_type ?? 'text',
             'base_url' => $data['base_url'],
             'status' => $data['status'],
+            'rate_limit_per_minute' => $data['rate_limit_per_minute'] ?? null,
+            'cost_limit_per_day' => $data['cost_limit_per_day'] ?? null,
+            'timeout_seconds' => $data['timeout_seconds'] ?? null,
             'updated_by' => $request->user()->id,
         ];
 

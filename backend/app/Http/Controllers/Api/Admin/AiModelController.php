@@ -36,11 +36,14 @@ class AiModelController extends Controller
     {
         return $request->validate([
             'provider_id' => ['required', 'integer'],
+            'modality' => ['nullable', 'in:text,image,video,embedding,audio'],
             'model_name' => ['required', 'string', 'max:180'],
             'display_name' => ['required', 'string', 'max:180'],
+            'capabilities_json' => ['nullable', 'array'],
             'context_window' => ['nullable', 'integer', 'min:1'],
             'input_price_per_million_tokens' => ['nullable', 'numeric', 'min:0'],
             'output_price_per_million_tokens' => ['nullable', 'numeric', 'min:0'],
+            'unit_price' => ['nullable', 'numeric', 'min:0'],
             'is_active' => ['required', 'boolean'],
         ]);
     }
