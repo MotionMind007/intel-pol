@@ -20,8 +20,7 @@ class AiProvider extends Model
     ];
 
     protected $hidden = [
-        // Removed api_key_encrypted from hidden so it can be accessed internally
-        // Security is maintained via masked_api_key appended attribute for API responses
+        'api_key_encrypted',
     ];
 
     protected $appends = [
@@ -49,5 +48,14 @@ class AiProvider extends Model
         return strlen($key) <= 8
             ? str_repeat('*', strlen($key))
             : substr($key, 0, 6).'...'.substr($key, -4);
+    }
+
+    /**
+     * Get the decrypted API key for internal service-to-service communication.
+     * This is intentionally separate from serialization to prevent accidental exposure.
+     */
+    public function getDecryptedApiKey(): ?string
+    {
+        return $this->api_key_encrypted;
     }
 }

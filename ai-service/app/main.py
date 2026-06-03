@@ -10,6 +10,8 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from app.sanitizer import sanitize_name, sanitize_user_input
+
 try:
     from playwright.async_api import async_playwright
 except Exception:  # pragma: no cover - optional runtime dependency
@@ -88,7 +90,13 @@ class CreativeAssetRequest(BaseModel):
 
 
 def verify_internal_token(token: str | None) -> None:
-    expected = os.getenv("INTERNAL_SERVICE_TOKEN", "local-dev-token")
+    expected = os.getenv("INTERNAL_SERVICE_TOKEN")
+
+    if not expected:
+        raise HTTPException(
+            status_code=500,
+            detail="INTERNAL_SERVICE_TOKEN environment variable is not configured.",
+        )
 
     if not token or token != expected:
         raise HTTPException(status_code=401, detail="Invalid internal token.")
@@ -114,6 +122,10 @@ def test_provider(payload: ProviderConfig, x_internal_token: str | None = Header
 @app.post("/internal/ai/screening/generate")
 async def generate_screening(payload: ScreeningRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_token(x_internal_token)
+
+    # Sanitize user input to prevent prompt injection
+    safe_subject = sanitize_name(payload.subject_name)
+    payload.subject_name = safe_subject
 
     wikipedia = await fetch_wikipedia_context(payload.subject_name)
     browser_pages = await collect_browser_context(payload.subject_name, wikipedia, payload.agent)
@@ -141,6 +153,9 @@ async def generate_screening(payload: ScreeningRequest, x_internal_token: str | 
 async def run_media_monitoring(payload: MediaMonitoringRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_token(x_internal_token)
 
+    # Sanitize user input to prevent prompt injection
+    payload.keyword = sanitize_name(payload.keyword)
+
     context = await collect_media_monitoring_context(payload.keyword, payload.agent)
 
     if should_use_provider(payload.agent):
@@ -164,6 +179,9 @@ async def run_media_monitoring(payload: MediaMonitoringRequest, x_internal_token
 @app.post("/internal/ai/policy-intelligence/analyze")
 async def analyze_policy_intelligence(payload: PolicyIntelligenceRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_token(x_internal_token)
+
+    # Sanitize user input to prevent prompt injection
+    payload.policy_topic = sanitize_user_input(payload.policy_topic)
 
     context = await collect_policy_context(payload.policy_topic, payload.agent)
 
@@ -189,6 +207,12 @@ async def analyze_policy_intelligence(payload: PolicyIntelligenceRequest, x_inte
 async def generate_campaign_strategy(payload: CampaignStrategyRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_token(x_internal_token)
 
+    # Sanitize user input to prevent prompt injection
+    payload.campaign_object_name = sanitize_user_input(payload.campaign_object_name)
+    payload.campaign_goal = sanitize_user_input(payload.campaign_goal)
+    if payload.region:
+        payload.region = sanitize_name(payload.region)
+
     context = await collect_campaign_context(payload, payload.agent)
 
     if should_use_provider(payload.agent):
@@ -213,6 +237,15 @@ async def generate_campaign_strategy(payload: CampaignStrategyRequest, x_interna
 async def generate_creative_package(payload: CreativePackageRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_token(x_internal_token)
 
+    # Sanitize user input to prevent prompt injection
+    payload.campaign_object_name = sanitize_user_input(payload.campaign_object_name)
+    if payload.campaign_goal:
+        payload.campaign_goal = sanitize_user_input(payload.campaign_goal)
+    if payload.target_audience:
+        payload.target_audience = sanitize_user_input(payload.target_audience)
+    if payload.content_objective:
+        payload.content_objective = sanitize_user_input(payload.content_objective)
+
     if should_use_provider(payload.agent):
         try:
             return await generate_creative_package_with_provider(payload)
@@ -231,6 +264,9 @@ async def generate_creative_package(payload: CreativePackageRequest, x_internal_
 @app.post("/internal/ai/creative-studio/asset")
 async def generate_creative_asset(payload: CreativeAssetRequest, x_internal_token: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_token(x_internal_token)
+
+    # Sanitize prompt input to prevent injection
+    payload.prompt = sanitize_user_input(payload.prompt)
 
     return build_mock_creative_asset(payload)
 
