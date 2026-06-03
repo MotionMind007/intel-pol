@@ -10,16 +10,37 @@ use App\Models\Skill;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+        // In production, generate strong random passwords and log them once.
+        // Demo credentials are only allowed in local/testing environments.
+        $isProduction = app()->environment('production');
+
+        $superAdminPassword = $isProduction
+            ? Str::random(24)
+            : (env('SEED_SUPER_ADMIN_PASSWORD', 'password'));
+
+        $analystPassword = $isProduction
+            ? Str::random(24)
+            : (env('SEED_ANALYST_PASSWORD', 'password'));
+
+        if ($isProduction) {
+            $this->command->warn('⚠️  Production environment detected. Strong random passwords generated.');
+            $this->command->info("Super Admin (superadmin@example.com): {$superAdminPassword}");
+            $this->command->info("Analyst (analyst@example.com): {$analystPassword}");
+            $this->command->warn('⚠️  Save these credentials NOW. They will not be shown again.');
+            $this->command->newLine();
+        }
+
         User::updateOrCreate(
             ['email' => 'superadmin@example.com'],
             [
                 'name' => 'Super Admin',
-                'password' => Hash::make('password'),
+                'password' => Hash::make($superAdminPassword),
                 'role' => 'super_admin',
                 'status' => 'active',
             ],
@@ -29,7 +50,7 @@ class DatabaseSeeder extends Seeder
             ['email' => 'analyst@example.com'],
             [
                 'name' => 'Political Analyst',
-                'password' => Hash::make('password'),
+                'password' => Hash::make($analystPassword),
                 'role' => 'analyst',
                 'status' => 'active',
             ],

@@ -21,7 +21,7 @@ class AnalyzePolicyIntelligence implements ShouldQueue
 
     public int $tries = 1;
 
-    public int $timeout = 0;
+    public int $timeout = 600; // 10 minutes max
 
     public function __construct(public int $requestId)
     {

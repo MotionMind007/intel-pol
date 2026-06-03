@@ -91,7 +91,7 @@ class AiProviderController extends Controller
             'data' => $client->testConnection([
                 'name' => $aiProvider->name,
                 'base_url' => $aiProvider->base_url,
-                'api_key' => $aiProvider->api_key_encrypted,
+                'api_key' => $aiProvider->getDecryptedApiKey(),
             ]),
         ]);
     }

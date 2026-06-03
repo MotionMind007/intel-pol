@@ -16,7 +16,7 @@ class GenerateScreeningReport implements ShouldQueue
 
     public int $tries = 1;
 
-    public int $timeout = 0;
+    public int $timeout = 600; // 10 minutes max
 
     /**
      * Create a new job instance.
@@ -31,8 +31,6 @@ class GenerateScreeningReport implements ShouldQueue
      */
     public function handle(FastAiClient $client): void
     {
-        @set_time_limit(0);
-
         $report = ScreeningReport::query()->findOrFail($this->reportId);
         $agent = Agent::with(['provider', 'model', 'skills'])->findOrFail($report->agent_id);
 

@@ -29,7 +29,7 @@ class FastAiClient
                 'provider' => $provider ? [
                     'name' => $provider->name,
                     'base_url' => $provider->base_url,
-                    'api_key' => $provider->api_key_encrypted, // This will be decrypted by Laravel's encrypted cast
+                    'api_key' => $provider->getDecryptedApiKey(),
                 ] : null,
                 'model' => $model?->model_name,
                 'skills' => $agent->skills
@@ -75,7 +75,7 @@ class FastAiClient
                 'provider' => $provider ? [
                     'name' => $provider->name,
                     'base_url' => $provider->base_url,
-                    'api_key' => $provider->api_key_encrypted,
+                    'api_key' => $provider->getDecryptedApiKey(),
                 ] : null,
                 'model' => $model?->model_name,
                 'skills' => $agent->skills
@@ -121,7 +121,7 @@ class FastAiClient
                 'provider' => $provider ? [
                     'name' => $provider->name,
                     'base_url' => $provider->base_url,
-                    'api_key' => $provider->api_key_encrypted,
+                    'api_key' => $provider->getDecryptedApiKey(),
                 ] : null,
                 'model' => $model?->model_name,
                 'skills' => $agent->skills
@@ -170,7 +170,7 @@ class FastAiClient
                 'provider' => $provider ? [
                     'name' => $provider->name,
                     'base_url' => $provider->base_url,
-                    'api_key' => $provider->api_key_encrypted,
+                    'api_key' => $provider->getDecryptedApiKey(),
                 ] : null,
                 'model' => $model?->model_name,
                 'skills' => $agent->skills
@@ -216,7 +216,7 @@ class FastAiClient
                 'provider' => $provider ? [
                     'name' => $provider->name,
                     'base_url' => $provider->base_url,
-                    'api_key' => $provider->api_key_encrypted,
+                    'api_key' => $provider->getDecryptedApiKey(),
                 ] : null,
                 'model' => $model?->model_name,
                 'skills' => $agent->skills
@@ -268,7 +268,7 @@ class FastAiClient
                 'name' => $provider->name,
                 'provider_type' => $provider->provider_type,
                 'base_url' => $provider->base_url,
-                'api_key' => $provider->api_key_encrypted,
+                'api_key' => $provider->getDecryptedApiKey(),
             ] : null,
             'model' => $model?->model_name,
         ];

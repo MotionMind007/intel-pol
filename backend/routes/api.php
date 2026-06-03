@@ -15,54 +15,80 @@ use App\Http\Controllers\Api\PolicyIntelligenceController;
 use App\Http\Controllers\Api\ScreeningReportController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('/auth/login', [AuthController::class, 'login']);
+// Rate limited: 5 attempts per minute per IP to prevent brute force
+Route::post('/auth/login', [AuthController::class, 'login'])
+    ->middleware('throttle:5,1');
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me', [AuthController::class, 'me']);
     Route::get('/modules', [ModuleController::class, 'index']);
 
-    Route::apiResource('screening-reports', ScreeningReportController::class)
-        ->only(['index', 'store', 'show', 'destroy']);
+    // Screening Reports - write operations require 'can_generate' middleware
+    Route::get('/screening-reports', [ScreeningReportController::class, 'index']);
+    Route::get('/screening-reports/{screening_report}', [ScreeningReportController::class, 'show']);
+    Route::middleware('can_generate')->group(function () {
+        Route::post('/screening-reports', [ScreeningReportController::class, 'store'])
+            ->middleware('throttle:10,1');
+        Route::delete('/screening-reports/{screening_report}', [ScreeningReportController::class, 'destroy']);
+    });
 
+    // Media Monitoring - write operations require 'can_generate' middleware
     Route::get('/media-monitoring', [MediaMonitoringController::class, 'index']);
-    Route::post('/media-monitoring/run', [MediaMonitoringController::class, 'run']);
     Route::get('/media-monitoring/runs', [MediaMonitoringController::class, 'runs']);
     Route::get('/media-monitoring/runs/{run}', [MediaMonitoringController::class, 'show']);
-    Route::delete('/media-monitoring/runs/{run}', [MediaMonitoringController::class, 'destroyRun']);
     Route::get('/media-monitoring/items/{item}', [MediaMonitoringController::class, 'item']);
     Route::get('/media-monitoring/sources', [MediaMonitoringController::class, 'sources']);
-    Route::post('/media-monitoring/sources', [MediaMonitoringController::class, 'storeSource']);
-    Route::put('/media-monitoring/sources/{source}', [MediaMonitoringController::class, 'updateSource']);
-    Route::delete('/media-monitoring/keywords/{keyword}', [MediaMonitoringController::class, 'destroyKeyword']);
+    Route::middleware('can_generate')->group(function () {
+        Route::post('/media-monitoring/run', [MediaMonitoringController::class, 'run'])
+            ->middleware('throttle:10,1');
+        Route::delete('/media-monitoring/runs/{run}', [MediaMonitoringController::class, 'destroyRun']);
+        Route::post('/media-monitoring/sources', [MediaMonitoringController::class, 'storeSource']);
+        Route::put('/media-monitoring/sources/{source}', [MediaMonitoringController::class, 'updateSource']);
+        Route::delete('/media-monitoring/keywords/{keyword}', [MediaMonitoringController::class, 'destroyKeyword']);
+    });
 
+    // Policy Intelligence - write operations require 'can_generate' middleware
     Route::get('/policy-intelligence', [PolicyIntelligenceController::class, 'index']);
-    Route::post('/policy-intelligence/analyze', [PolicyIntelligenceController::class, 'analyze']);
     Route::get('/policy-intelligence/reports', [PolicyIntelligenceController::class, 'reports']);
     Route::get('/policy-intelligence/reports/{policyResearchRequest}', [PolicyIntelligenceController::class, 'show']);
-    Route::delete('/policy-intelligence/reports/{policyResearchRequest}', [PolicyIntelligenceController::class, 'destroy']);
+    Route::middleware('can_generate')->group(function () {
+        Route::post('/policy-intelligence/analyze', [PolicyIntelligenceController::class, 'analyze'])
+            ->middleware('throttle:10,1');
+        Route::delete('/policy-intelligence/reports/{policyResearchRequest}', [PolicyIntelligenceController::class, 'destroy']);
+    });
 
+    // Campaign Strategy - write operations require 'can_generate' middleware
     Route::get('/campaign-strategy', [CampaignStrategyController::class, 'index']);
-    Route::post('/campaign-strategy/generate', [CampaignStrategyController::class, 'generate']);
     Route::get('/campaign-strategy/reports', [CampaignStrategyController::class, 'reports']);
     Route::get('/campaign-strategy/reports/{campaignStrategyRequest}', [CampaignStrategyController::class, 'show']);
-    Route::delete('/campaign-strategy/reports/{campaignStrategyRequest}', [CampaignStrategyController::class, 'destroy']);
+    Route::middleware('can_generate')->group(function () {
+        Route::post('/campaign-strategy/generate', [CampaignStrategyController::class, 'generate'])
+            ->middleware('throttle:10,1');
+        Route::delete('/campaign-strategy/reports/{campaignStrategyRequest}', [CampaignStrategyController::class, 'destroy']);
+    });
 
+    // Creative Studio - write operations require 'can_generate' middleware
     Route::get('/creative-studio', [CreativeStudioController::class, 'index']);
-    Route::post('/creative-studio/projects', [CreativeStudioController::class, 'storeProject']);
     Route::get('/creative-studio/projects', [CreativeStudioController::class, 'projects']);
     Route::get('/creative-studio/projects/{creativeProject}', [CreativeStudioController::class, 'showProject']);
-    Route::put('/creative-studio/projects/{creativeProject}', [CreativeStudioController::class, 'updateProject']);
-    Route::delete('/creative-studio/projects/{creativeProject}', [CreativeStudioController::class, 'destroyProject']);
-    Route::post('/creative-studio/packages/generate', [CreativeStudioController::class, 'generatePackage']);
-    Route::post('/creative-studio/images/generate', [CreativeStudioController::class, 'generateImage']);
-    Route::post('/creative-studio/videos/generate', [CreativeStudioController::class, 'generateVideo']);
     Route::get('/creative-studio/jobs/{job}', [CreativeStudioController::class, 'showJob']);
     Route::get('/creative-studio/assets', [CreativeStudioController::class, 'assets']);
     Route::get('/creative-studio/assets/{asset}', [CreativeStudioController::class, 'showAsset']);
-    Route::post('/creative-studio/assets/{asset}/approve', [CreativeStudioController::class, 'approveAsset']);
-    Route::post('/creative-studio/assets/{asset}/reject', [CreativeStudioController::class, 'rejectAsset']);
-    Route::delete('/creative-studio/assets/{asset}', [CreativeStudioController::class, 'destroyAsset']);
+    Route::middleware('can_generate')->group(function () {
+        Route::post('/creative-studio/projects', [CreativeStudioController::class, 'storeProject']);
+        Route::put('/creative-studio/projects/{creativeProject}', [CreativeStudioController::class, 'updateProject']);
+        Route::delete('/creative-studio/projects/{creativeProject}', [CreativeStudioController::class, 'destroyProject']);
+        Route::post('/creative-studio/packages/generate', [CreativeStudioController::class, 'generatePackage'])
+            ->middleware('throttle:10,1');
+        Route::post('/creative-studio/images/generate', [CreativeStudioController::class, 'generateImage'])
+            ->middleware('throttle:10,1');
+        Route::post('/creative-studio/videos/generate', [CreativeStudioController::class, 'generateVideo'])
+            ->middleware('throttle:10,1');
+        Route::post('/creative-studio/assets/{asset}/approve', [CreativeStudioController::class, 'approveAsset']);
+        Route::post('/creative-studio/assets/{asset}/reject', [CreativeStudioController::class, 'rejectAsset']);
+        Route::delete('/creative-studio/assets/{asset}', [CreativeStudioController::class, 'destroyAsset']);
+    });
 
     Route::prefix('admin')->middleware('super_admin')->group(function () {
         Route::apiResource('agents', AgentController::class);
